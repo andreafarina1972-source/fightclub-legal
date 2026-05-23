@@ -26,7 +26,7 @@ function getStorageSafe() {
 }
 
 // ✅ lingua app da i18n (fallback en)
-function getAppLang() {
+export function getAppLang() {
   try {
     const mod = require("../i18n");
     const locale = mod?.i18n?.locale || mod?.i18n?.currentLocale || "en";

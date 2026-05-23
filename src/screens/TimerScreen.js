@@ -13,6 +13,9 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 
 import { Svg, Circle } from "react-native-svg";
 import { speakRoundStart } from "../services/voiceCoach";
+import { useFightScore } from "../services/fightScore";
+import FightScoreBadge from "../components/FightScoreBadge";
+import { speakCornermanFeedback } from "../services/cornermanAI";
 import { loadSounds } from "../services/soundManager";
 import { t } from "../i18n";
 
@@ -96,8 +99,20 @@ export default function TimerScreen({ route }) {
 
   const [hr, setHr] = useState(null);
   const hrRef = useRef(null);
+  // Cornerman AI: traccia picco e media HR per round
+  const hrPeakRef = useRef(null);   // HR massima nel round corrente
+  const hrSumRef  = useRef(0);      // somma HR per calcolo media
+  const hrSamplesRef = useRef(0);   // numero campioni HR
   useEffect(() => {
     hrRef.current = hr;
+    if (hr != null && Number.isFinite(hr)) {
+      // aggiorna picco solo durante il round
+      if (hrPeakRef.current == null || hr > hrPeakRef.current) {
+        hrPeakRef.current = hr;
+      }
+      hrSumRef.current += hr;
+      hrSamplesRef.current += 1;
+    }
   }, [hr]);
 
   const [hrStatus, setHrStatus] = useState("disconnected");
@@ -118,9 +133,49 @@ export default function TimerScreen({ route }) {
       if (lastAnnouncedRoundRef.current !== round) {
         lastAnnouncedRoundRef.current = round;
         speakRoundStart(round);
+        // reset HR stats per il nuovo round
+        hrPeakRef.current = null;
+        hrSumRef.current = 0;
+        hrSamplesRef.current = 0;
       }
     }
   }, [phase, round]);
+
+  // Cornerman AI: feedback vocale all'inizio della pausa (subito dopo il round)
+  const lastCornermanRoundRef = useRef(null);
+  useEffect(() => {
+    const isResting =
+      String(phase || "").toLowerCase() === "rest" ||
+      String(phase || "").toLowerCase() === "cyclerest" ||
+      String(phase || "").toLowerCase() === "finish";
+
+    if (!isResting) return;
+    // evita di ripetere il feedback per lo stesso round
+    if (lastCornermanRoundRef.current === round) return;
+    lastCornermanRoundRef.current = round;
+
+    const punchesThisRound =
+      Array.isArray(punchesByRound) && punchesByRound.length > 0
+        ? punchesByRound[punchesByRound.length - 1]
+        : 0;
+
+    const hrAvg =
+      hrSamplesRef.current > 0
+        ? Math.round(hrSumRef.current / hrSamplesRef.current)
+        : null;
+
+    speakCornermanFeedback({
+      roundNumber:      round,
+      totalRounds:      config.rounds,
+      punchesThisRound: punchesThisRound,
+      punchesTotal:     punchCount,
+      hrPeak:           hrPeakRef.current,
+      hrAvg:            hrAvg,
+      hrMax:            hrMax,
+      roundSeconds:     config.round,
+      isLastRound:      String(phase || "").toLowerCase() === "finish",
+    });
+  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const isRunning = phase !== "idle" && phase !== "finish";
@@ -251,6 +306,7 @@ export default function TimerScreen({ route }) {
       totalSeconds,
       punches: punchCount,
       punchesByRound: Array.isArray(punchesByRound) ? punchesByRound : [],
+      fightScorePeak: fightScore?.total ?? null,
       rounds: config.rounds,
       cycles: config.cycles,
       avgHr: hr ?? null,
@@ -392,6 +448,17 @@ if (String(phase || "").toLowerCase() === "round" && isFirstRound && seconds <= 
   const metZones = useMemo(() => zonesMeta(zonesLive.metabolic), [zonesLive]);
   const trainZones = useMemo(() => trainingZonesMeta(zonesLive.training), [zonesLive]);
 
+  // Fight Score live
+  const fightScore = useFightScore({
+    phase,
+    hrBpm: hr,
+    hrMax,
+    punchCount,
+    punchesByRound,
+    roundSeconds: config.round,
+    seconds,
+  });
+
   // ✅ i18n labels for zone legends (keeps backward-compat if labelKey is missing)
   const metZonesI18n = useMemo(
     () => (metZones || []).map(z => ({ ...z, label: z?.labelKey ? (t(z.labelKey) || z.label) : z.label })),
@@ -453,6 +520,9 @@ if (String(phase || "").toLowerCase() === "round" && isFirstRound && seconds <= 
 
           {/* ✅ SOTTO IL CERCHIO: COLPI */}
           <Text style={styles.punchesText}>{t("timerScreen.punches", { n: punchCount })}</Text>
+
+          {/* FIGHT SCORE BADGE */}
+          <FightScoreBadge scoreData={fightScore} phase={phase} />
 
           {/* resto UI */}
           <Text style={styles.hrText}>

@@ -13,6 +13,7 @@ import TrainingScreen from "../screens/TrainingScreen";
 import RunningScreen from "../screens/RunningScreen";
 import HistoryScreen from "../screens/HistoryScreen";
 import SettingsScreen from "../screens/SettingsScreen";
+import AiCoachScreen from "../screens/AiCoachScreen";
 
 // ✅ compat: some setups may expose createBottomTabNavigator as default export
 const _createTabs =
@@ -44,6 +45,7 @@ export default function RootNavigator() {
             Running: "walk-outline",
             History: "stats-chart-outline",
             Settings: "settings-outline",
+            AiCoach: "sparkles-outline",
           };
           return <Ionicons name={map[route.name] || "ellipse"} size={size} color={color} />;
         },
@@ -56,6 +58,7 @@ export default function RootNavigator() {
       <Tab.Screen name="Training" component={TrainingScreen} options={{ title: t("tabs.training") }} />
       <Tab.Screen name="Running" component={RunningScreen} options={{ title: t("tabs.running") }} />
       <Tab.Screen name="History" component={HistoryScreen} options={{ title: t("tabs.history") }} />
+      <Tab.Screen name="AiCoach" component={AiCoachScreen} options={{ title: "AI Coach" }} />
       <Tab.Screen name="Settings" component={SettingsScreen} options={{ title: t("tabs.settings") }} />
     </Tab.Navigator>
   );

@@ -59,6 +59,10 @@ export default function SettingsScreen() {
   // calibrazione
   const [calibrated, setCalibrated] = useState(false);
 
+  // 🥊 CONTA COLPI abilitata/disabilitata
+  const [punchCounterEnabled, setPunchCounterEnabled] = useState(true);
+  const PUNCH_ENABLED_KEY = "punchCounterEnabled";
+
   // ❤️ HR
   const [hrStatus, setHrStatus] = useState("disconnected");
   const [currentHr, setCurrentHr] = useState(null);
@@ -96,6 +100,10 @@ export default function SettingsScreen() {
       const nf = await AsyncStorage.getItem("punchNoiseFloor");
       const pk = await AsyncStorage.getItem("punchPeak");
       setCalibrated(!!(nf && pk));
+
+      // 🥊 carica toggle conta colpi
+      const punchEn = await AsyncStorage.getItem("punchCounterEnabled");
+      setPunchCounterEnabled(punchEn !== "false");
 
       const savedProfile = await AsyncStorage.getItem("audioProfile");
       if (savedProfile) setAudioProfile(savedProfile);
@@ -483,16 +491,49 @@ export default function SettingsScreen() {
           {/* 🎯 CALIBRAZIONE */}
           <GlassCard>
             <Text style={styles.label}>{t("settingsScreen.punchCounter")}</Text>
-            <Text style={styles.sub}>
-              {t("common.status")}:{" "}
-              <Text style={{ fontWeight: "700", color: calibrated ? "#37E293" : "#E33535" }}>
-                {calibrated ? t("settingsScreen.calibrated") : t("settingsScreen.notCalibrated")}
-              </Text>
-            </Text>
 
-            <TouchableOpacity style={styles.profileBtn} onPress={calibratePunchCounter}>
-              <Text style={styles.profileText}>{t("settingsScreen.calibrate")}</Text>
-            </TouchableOpacity>
+            {/* Toggle attiva/disattiva conta colpi */}
+            <View style={styles.row}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sub}>
+                  {punchCounterEnabled
+                    ? t("settingsScreen.punchCounterOn", { defaultValue: "Conta colpi attiva" })
+                    : t("settingsScreen.punchCounterOff", { defaultValue: "Conta colpi disattivata" })}
+                </Text>
+                {!punchCounterEnabled && (
+                  <Text style={[styles.subSmall, { color: "#E33535", marginTop: 2 }]}>
+                    {t("settingsScreen.punchCounterOffHint", {
+                      defaultValue: "Il microfono non verrà usato durante l'allenamento",
+                    })}
+                  </Text>
+                )}
+              </View>
+              <Switch
+                value={punchCounterEnabled}
+                thumbColor={punchCounterEnabled ? "#37E293" : "#555"}
+                trackColor={{ false: "#2a1a1a", true: "#0d1f14" }}
+                onValueChange={async (v) => {
+                  setPunchCounterEnabled(v);
+                  await AsyncStorage.setItem("punchCounterEnabled", v.toString());
+                }}
+              />
+            </View>
+
+            {/* Stato calibrazione e bottone — visibili solo se attiva */}
+            {punchCounterEnabled && (
+              <>
+                <Text style={[styles.sub, { marginTop: 10 }]}>
+                  {t("common.status")}:{" "}
+                  <Text style={{ fontWeight: "700", color: calibrated ? "#37E293" : "#E33535" }}>
+                    {calibrated ? t("settingsScreen.calibrated") : t("settingsScreen.notCalibrated")}
+                  </Text>
+                </Text>
+
+                <TouchableOpacity style={styles.profileBtn} onPress={calibratePunchCounter}>
+                  <Text style={styles.profileText}>{t("settingsScreen.calibrate")}</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </GlassCard>
 
           {/* ❤️ CARDIO */}

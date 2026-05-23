@@ -28,6 +28,16 @@ function parseSensitivityTo01(raw) {
  */
 export async function startPunchDetection(onPunch) {
   if (running || stopping) return () => {};
+
+  // 🥊 rispetta il toggle "conta colpi" delle Settings
+  try {
+    const enabled = await AsyncStorage.getItem("punchCounterEnabled");
+    if (enabled === "false") {
+      console.log("🥊 Conta colpi disattivata dalle impostazioni");
+      return () => {}; // no-op: ritorna stop fittizio
+    }
+  } catch {}
+
   running = true;
 
   // token sessione

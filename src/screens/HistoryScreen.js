@@ -8,6 +8,8 @@ import { t } from "../i18n";
 import CardioZonesChart from "../components/CardioZonesChart";
 import { zonesMeta, trainingZonesMeta } from "../services/hrZones";
 import { useHistoryData } from "../context/HistoryContext";
+import SessionShareCard from "../components/SessionShareCard";
+import { useShareSession } from "../hooks/useShareSession";
 
 // ✅ Etichette zone: tradotte + forza a capo per testi lunghi
 // Nota: mantiene compatibilità se hrZones non espone ancora labelKey
@@ -536,6 +538,26 @@ export default function HistoryScreen({ navigation }) {
     return { values, last, avg5, avgPrev5, delta, score, count: values.length };
   }, [vo2Measurements]);
 
+  // Share card per singola sessione
+  function ShareButton({ session }) {
+    const { shareRef, handleShare, sharing } = useShareSession(session);
+    return (
+      <>
+        {/* Card nascosta fuori schermo catturata da view-shot */}
+        <View style={{ position: "absolute", left: -9999, top: 0, opacity: 0 }}>
+          <SessionShareCard ref={shareRef} session={session} />
+        </View>
+        <Pressable
+          style={shareStyles.btn}
+          onPress={handleShare}
+          disabled={sharing}
+        >
+          <Text style={shareStyles.btnText}>{sharing ? "Generando..." : "Condividi 📤"}</Text>
+        </Pressable>
+      </>
+    );
+  }
+
   const renderItem = ({ item }) => {
     const id = item?.id?.toString?.();
     const selected = !!id && selectedIds.has(id);
@@ -691,6 +713,9 @@ export default function HistoryScreen({ navigation }) {
                 })}
               </Text>
             )}
+
+            {/* Bottone condividi */}
+            <ShareButton session={item} />
           </>
         )}
       </Pressable>
@@ -963,4 +988,22 @@ const styles = StyleSheet.create({
   checkText: { color: "#37E293", fontWeight: "900" },
 
   empty: { color: "#777", textAlign: "center", marginTop: 30, fontWeight: "700" },
+});
+
+const shareStyles = StyleSheet.create({
+  btn: {
+    marginTop: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: "rgba(55,226,147,0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(55,226,147,0.25)",
+    alignItems: "center",
+  },
+  btnText: {
+    color: "#37E293",
+    fontWeight: "800",
+    fontSize: 14,
+  },
 });

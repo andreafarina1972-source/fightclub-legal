@@ -18,6 +18,8 @@ import { getAthleteAge } from "../services/hrZones";
 
 // ✅ i18n
 import { t } from "../i18n";
+import { loadAiPlan, getTodaySession, formatWorkoutParams, isPlanCurrentWeek } from "../services/aiCoach";
+import { computeTrainingLoad } from "../services/trainingLoad";
 
 // ✅ formato richiesto: gg/mm/anno  18:42
 function formatDateTime(iso) {
@@ -69,6 +71,16 @@ export default function HomeScreen({ navigation }) {
     } catch {}
   }, []);
 
+  const [aiPlan, setAiPlan] = useState(null);
+  const [aiTodaySession, setAiTodaySession] = useState(null);
+  const { current: tlCurrent } = useMemo(() => computeTrainingLoad(sessions, 90), [sessions]);
+  useFocusEffect(useCallback(() => {
+    loadAiPlan().then(plan => {
+      if (plan && isPlanCurrentWeek(plan)) {
+        setAiPlan(plan); setAiTodaySession(getTodaySession(plan));
+      } else { setAiPlan(null); setAiTodaySession(null); }
+    }).catch(() => {});
+  }, []));
   const latestVo2Label = useMemo(() => {
     const v = Number(latestVo2?.value);
     return Number.isFinite(v) ? `${Math.round(v * 10) / 10}` : "--";
@@ -295,25 +307,57 @@ export default function HomeScreen({ navigation }) {
           contentContainerStyle={{ paddingBottom: 24 + insets.bottom + 90 }}
           showsVerticalScrollIndicator={false}
         >
-          <GlassCard style={styles.mainTimerCard}>
-            <Text style={styles.sectionLabel}>{t("home.nextWorkout")}</Text>
-            <Text style={styles.workoutName}>Round 3x3’ Boxe</Text>
-
-            <View style={styles.circleWrapper}>
-              <View style={styles.circleOuter}>
-                <View style={styles.circleInner}>
-                  <Text style={styles.circleTop}>ROUND</Text>
-                  <Text style={styles.circleMain}>01</Text>
-                  <Text style={styles.circleBottom}>03:00</Text>
+          {aiPlan && aiTodaySession ? (
+            <GlassCard style={[styles.mainTimerCard, { borderColor: "rgba(55,226,147,0.2)" }]}>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <Text style={styles.sectionLabel}>{t("home.nextWorkout")}</Text>
+                <View style={styles.aiBadge}><Text style={styles.aiBadgeText}>AI Coach</Text></View>
+              </View>
+              <Text style={styles.workoutName}>{aiTodaySession.name}</Text>
+              <Text style={styles.aiObjective}>{aiTodaySession.objective}</Text>
+              {aiTodaySession.workout && (
+                <View style={styles.aiWorkoutBox}>
+                  <Text style={styles.aiWorkoutText}>{formatWorkoutParams(aiTodaySession.workout)}</Text>
+                  {aiTodaySession.intensityTarget && (
+                    <Text style={styles.aiIntensity}>{aiTodaySession.intensityTarget}</Text>
+                  )}
+                </View>
+              )}
+              {aiPlan.alertIfTSB != null && tlCurrent.tsb < aiPlan.alertIfTSB && (
+                <View style={styles.aiAlert}>
+                  <Text style={styles.aiAlertText}>Fatica elevata (TSB {Math.round(tlCurrent.tsb)}) - valuta recupero</Text>
+                </View>
+              )}
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                {aiTodaySession.workout && (
+                  <Pressable style={[styles.primaryButton, { flex: 1 }]}
+                    onPress={() => { const nav = navigation.getParent?.() || navigation; nav.navigate("TimerRun", { workout: aiTodaySession.workout }); }}>
+                    <Ionicons name="play" size={18} color="#050508" />
+                    <Text style={styles.primaryButtonText}>Avvia ora</Text>
+                  </Pressable>
+                )}
+                <Pressable style={styles.aiCoachBtn} onPress={() => navigation.navigate("AiCoach")}>
+                  <Text style={styles.aiCoachBtnText}>Vedi piano</Text>
+                </Pressable>
+              </View>
+            </GlassCard>
+          ) : (
+            <GlassCard style={styles.mainTimerCard}>
+              <Text style={styles.sectionLabel}>{t("home.nextWorkout")}</Text>
+              <View style={styles.circleWrapper}>
+                <View style={styles.circleOuter}>
+                  <View style={styles.circleInner}>
+                    <Text style={styles.circleTop}>ROUND</Text>
+                    <Text style={styles.circleMain}>01</Text>
+                    <Text style={styles.circleBottom}>03:00</Text>
+                  </View>
                 </View>
               </View>
-            </View>
-
-            <Pressable style={styles.primaryButton} onPress={() => navigation.navigate("Timer")}>
-              <Ionicons name="play" size={18} color="#050508" />
-              <Text style={styles.primaryButtonText}>{t("home.startWorkout")}</Text>
-            </Pressable>
-          </GlassCard>
+              <Pressable style={styles.primaryButton} onPress={() => navigation.navigate("AiCoach")}>
+                <Text style={styles.primaryButtonText}>Genera piano AI</Text>
+              </Pressable>
+            </GlassCard>
+          )}
 
           <View style={styles.row}>
             {/* ✅ ULTIMO ALLENAMENTO DINAMICO + DATA */}
@@ -479,4 +523,14 @@ const styles = StyleSheet.create({
     backgroundColor: "#101018",
   },
   quickLabel: { color: "#FFFFFF", fontSize: 12, textAlign: "center" },
+  aiBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 99, backgroundColor: "rgba(55,226,147,0.1)", borderWidth: 1, borderColor: "rgba(55,226,147,0.25)" },
+  aiBadgeText: { color: "#37E293", fontSize: 10, fontWeight: "800" },
+  aiObjective: { color: "rgba(255,255,255,0.55)", fontSize: 13, lineHeight: 19, marginTop: -4 },
+  aiWorkoutBox: { backgroundColor: "rgba(55,226,147,0.06)", borderRadius: 10, borderWidth: 1, borderColor: "rgba(55,226,147,0.15)", padding: 12, gap: 4 },
+  aiWorkoutText: { color: "#37E293", fontSize: 15, fontWeight: "800" },
+  aiIntensity: { color: "rgba(55,226,147,0.6)", fontSize: 12, fontWeight: "600" },
+  aiAlert: { backgroundColor: "rgba(255,149,0,0.08)", borderRadius: 8, borderWidth: 1, borderColor: "rgba(255,149,0,0.25)", padding: 10 },
+  aiAlertText: { color: "#FF9500", fontSize: 12, fontWeight: "600" },
+  aiCoachBtn: { paddingHorizontal: 16, paddingVertical: 14, borderRadius: 12, borderWidth: 1, borderColor: "rgba(55,226,147,0.25)", justifyContent: "center" },
+  aiCoachBtnText: { color: "#37E293", fontWeight: "800", fontSize: 14 },
 });
