@@ -9,6 +9,16 @@ const HRMAX_KEY = "hrMax"; // opzionale: se lo imposti manualmente
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
+/** Formatta secondi in "m:ss" o "h:mm:ss" */
+export function formatDuration(seconds) {
+  const s = Math.round(Math.max(0, seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
 export async function getAthleteAge() {
   try {
     const raw = await AsyncStorage.getItem(AGE_KEY);

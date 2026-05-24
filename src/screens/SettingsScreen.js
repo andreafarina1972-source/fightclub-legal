@@ -20,6 +20,10 @@ import GlassCard from "../components/ui/GlassCard";
 import VolumeSlider from "../components/ui/VolumeSlider";
 import SoundLevelVisualizer from "../components/ui/SoundLevelVisualizer";
 import { connectHeartRate, disconnectHeartRate } from "../services/heartRateService";
+import {
+  setApiKey, loadApiKey, clearApiKey,
+  setProvider, loadProvider, AI_PROVIDERS, detectProvider,
+} from "../services/aiCoach";
 import { setSoundEnabledSingle, playBeep, playGong, playCount1 } from "../services/soundManager";
 
 // ✅ i18n
@@ -65,6 +69,11 @@ export default function SettingsScreen() {
 
   // ❤️ HR
   const [hrStatus, setHrStatus] = useState("disconnected");
+  // AI Coach API Key
+  const [apiKey, setApiKeyState] = useState("");
+  const [apiKeyVisible, setApiKeyVisible] = useState(false);
+  const [apiKeySaved, setApiKeySaved] = useState(false);
+  const [aiProvider, setAiProviderState] = useState("groq");
   const [currentHr, setCurrentHr] = useState(null);
 
   // UI
@@ -104,6 +113,11 @@ export default function SettingsScreen() {
       // 🥊 carica toggle conta colpi
       const punchEn = await AsyncStorage.getItem("punchCounterEnabled");
       setPunchCounterEnabled(punchEn !== "false");
+      // Carica API key AI Coach
+      const savedKey = await loadApiKey();
+      if (savedKey) { setApiKeyState(savedKey); setApiKeySaved(true); }
+      const savedProv = await loadProvider();
+      if (savedProv) setAiProviderState(savedProv);
 
       const savedProfile = await AsyncStorage.getItem("audioProfile");
       if (savedProfile) setAudioProfile(savedProfile);
@@ -534,6 +548,101 @@ export default function SettingsScreen() {
                 </TouchableOpacity>
               </>
             )}
+          </GlassCard>
+
+          {/* AI COACH API KEY */}
+          <GlassCard>
+            <Text style={styles.label}>AI Coach</Text>
+
+            {/* Selettore provider */}
+            <Text style={[styles.sub, { marginBottom: 6 }]}>
+              Provider AI — scegli quello gratuito:
+            </Text>
+            <View style={{ gap: 6, marginBottom: 12 }}>
+              {Object.entries(AI_PROVIDERS).map(([key, p]) => (
+                <TouchableOpacity
+                  key={key}
+                  style={[
+                    styles.agePill,
+                    { paddingVertical: 10, flexDirection: "row", justifyContent: "space-between" },
+                    aiProvider === key && { backgroundColor: "rgba(55,226,147,0.12)", borderColor: "rgba(55,226,147,0.4)" },
+                  ]}
+                  onPress={async () => { setAiProviderState(key); await setProvider(key); }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.sub, { fontWeight: "700", color: aiProvider === key ? "#37E293" : "#fff" }]}>
+                      {p.name}
+                    </Text>
+                    <Text style={[styles.sub, { fontSize: 11, color: "#666", marginTop: 2 }]}>{p.hint}</Text>
+                  </View>
+                  {aiProvider === key && (
+                    <Text style={{ color: "#37E293", fontSize: 18, marginLeft: 8, fontWeight: "900" }}>✓</Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Campo API Key */}
+            <Text style={[styles.sub, { marginBottom: 4 }]}>
+              {"API Key " + (AI_PROVIDERS[aiProvider]?.label || "") + ":"}
+            </Text>
+            <View style={styles.ageRow}>
+              <TextInput
+                value={apiKey}
+                onChangeText={(text) => { setApiKeyState(text); setApiKeySaved(false); }}
+                placeholder={(AI_PROVIDERS[aiProvider]?.keyPrefix || "sk-") + "..."}
+                placeholderTextColor="#555"
+                secureTextEntry={!apiKeyVisible}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={[styles.ageInput, { flex: 1 }]}
+              />
+              <TouchableOpacity
+                style={styles.agePill}
+                onPress={() => setApiKeyVisible(v => !v)}
+              >
+                <Text style={styles.agePillText}>{apiKeyVisible ? "Nascondi" : "Mostra"}</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.row}>
+              <Text style={[styles.sub, { flex: 1, color: apiKeySaved ? "#37E293" : "#8E8E99" }]}>
+                {apiKeySaved ? "Chiave salvata" : "Nessuna chiave salvata"}
+              </Text>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                {apiKeySaved && (
+                  <TouchableOpacity
+                    style={[styles.agePill, { backgroundColor: "rgba(226,55,89,0.1)" }]}
+                    onPress={async () => { await clearApiKey(); setApiKeyState(""); setApiKeySaved(false); }}
+                  >
+                    <Text style={[styles.agePillText, { color: "#E23759" }]}>Rimuovi</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={[styles.profileBtn, { marginTop: 0, paddingHorizontal: 18 }]}
+                  onPress={async () => {
+                    const key = apiKey.trim();
+                    if (key.length < 10) {
+                      Alert.alert("Chiave non valida", "Inserisci una chiave API valida.");
+                      return;
+                    }
+                    // auto-rileva provider dalla chiave
+                    const detected = detectProvider(key);
+                    if (detected) { setAiProviderState(detected); await setProvider(detected); }
+                    await setApiKey(key);
+                    setApiKeySaved(true);
+                    const provName = AI_PROVIDERS[detected || aiProvider]?.name || "";
+                    Alert.alert("Salvata!", "Chiave " + provName + " salvata correttamente.");
+                  }}
+                >
+                  <Text style={styles.profileText}>Salva</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <Text style={[styles.sub, { color: "#555", fontSize: 11, marginTop: 4 }]}>
+              La chiave viene rilevata automaticamente dal formato (gsk_=Groq, AIza=Gemini, sk-=Anthropic).
+            </Text>
           </GlassCard>
 
           {/* ❤️ CARDIO */}

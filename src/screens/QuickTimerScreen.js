@@ -16,6 +16,8 @@ import { Svg, Circle } from "react-native-svg";
 
 import GarminHeader from "../components/GarminHeader";
 import { speakRoundStart } from "../services/voiceCoach";
+import { calcFightScore } from "../services/fightScore";
+import FightScoreBadge from "../components/FightScoreBadge";
 
 // ✅ SOLO gong: inizio/fine round (niente Count1)
 import { playGong, loadSounds } from "../services/soundManager";
@@ -357,6 +359,7 @@ export default function QuickTimerScreen() {
       avgHr: null,
       punches: totalPunches,
       calories,
+      fightScorePeak: fightScore?.total ?? null,
       hrZones: {
         hrMax: hrMaxRef.current,
         elapsed: zonesRef.current.elapsed,
@@ -442,6 +445,25 @@ export default function QuickTimerScreen() {
 
   const metZones = useMemo(() => zonesMeta(zonesLive.metabolic), [zonesLive]);
   const trainZones = useMemo(() => trainingZonesMeta(zonesLive.training), [zonesLive]);
+
+  // Fight Score live
+  // usa roundPunches (colpi SOLO del round corrente) non totalPunches
+  const fightScore = useMemo(() => {
+    const isRound = phase === "work";
+    if (!isRound) {
+      return { total: 0, hrScore: 0, paceScore: 0, constancyScore: 0,
+               hrZone: null, ppm: 0, label: "IDLE" };
+    }
+    const elapsedInRound = Math.max(1,
+      (Number(selected.work) || 180) - (Number(remaining) || 0)
+    );
+    return calcFightScore({
+      hrBpm:          hr,
+      hrMax:          Number(hrMax) || 190,
+      punchesInRound: roundPunches,
+      elapsedInRound,
+    });
+  }, [phase, hr, hrMax, roundPunches, remaining, selected.work]);
 
   // i18n-safe labels (fallback to original label if translation missing)
   const metZonesI18n = useMemo(
@@ -555,6 +577,9 @@ export default function QuickTimerScreen() {
         </View>
 
 
+
+        {/* FIGHT SCORE BADGE */}
+        <FightScoreBadge scoreData={fightScore} phase={phase === "work" ? "round" : phase} />
 
         <Text style={styles.punchCount}>{t("quickTimer.punchesRound", { n: roundPunches })}</Text>
         <Text style={styles.intensityLabel}>{t("quickTimer.intensity", { n: liveIntensity })}</Text>

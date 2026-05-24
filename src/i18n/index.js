@@ -6911,7 +6911,7 @@ export async function initLanguage() {
   return lang;
 }
 
-  export async function setLanguage(lang) {
+export async function setLanguage(lang) {
   const normalized = mapToSupported(lang);
   i18n.locale = normalized;
   await AsyncStorage.setItem(STORAGE_KEY, normalized);
