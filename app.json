@@ -20,7 +20,13 @@
         }
       ],
       "./ant-plus-plugin",
-      "expo-localization"
+      "expo-localization",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "FightClub accede alle tue foto per impostare lo sfondo della fight card da condividere."
+        }
+      ]
     ],
     "splash": {
       "image": "./assets/splash.png",

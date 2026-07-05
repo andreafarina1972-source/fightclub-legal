@@ -19,7 +19,12 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import GlassCard from "../components/ui/GlassCard";
 import VolumeSlider from "../components/ui/VolumeSlider";
 import SoundLevelVisualizer from "../components/ui/SoundLevelVisualizer";
-import { connectHeartRate, disconnectHeartRate } from "../services/heartRateService";
+import {
+  connectHeartRate,
+  disconnectHeartRate,
+  subscribeHeartRate,
+  getConnectionSource,
+} from "../services/heartRateService";
 import {
   setApiKey, loadApiKey, clearApiKey,
   setProvider, loadProvider, AI_PROVIDERS, detectProvider,
@@ -87,6 +92,17 @@ export default function SettingsScreen() {
       if (saveAgeTimer.current) clearTimeout(saveAgeTimer.current);
       if (soundTimeout.current) clearTimeout(soundTimeout.current);
     };
+  }, []);
+
+  // ❤️ HR: riflette lo stato reale della fascia cardio (BLE/ANT+)
+  useEffect(() => {
+    if (getConnectionSource()) setHrStatus("connected");
+
+    const unsubscribe = subscribeHeartRate((bpm) => {
+      setCurrentHr(bpm);
+      setHrStatus("connected");
+    });
+    return unsubscribe;
   }, []);
 
   const loadSavedSettings = async () => {
@@ -245,10 +261,8 @@ export default function SettingsScreen() {
   const handleConnectHr = async () => {
     try {
       setHrStatus("scanning");
-      await connectHeartRate((bpm) => {
-        setCurrentHr(bpm);
-        setHrStatus("connected");
-      });
+      await connectHeartRate();
+      setHrStatus(getConnectionSource() ? "connected" : "disconnected");
     } catch {
       setHrStatus("disconnected");
     }

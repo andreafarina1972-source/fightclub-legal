@@ -1,16 +1,23 @@
 // src/components/SessionShareCard.js
 //
-// Componente React Native che genera una share card grafica per una sessione.
+// Componente React Native che genera una share card grafica per una sessione,
+// in stile "fight poster" UFC: scheda ufficiale con placca punteggio,
+// tale-of-the-tape delle statistiche e sfondo personalizzabile (foto o GIF).
+//
 // Viene catturata con react-native-view-shot e condivisa via expo-sharing.
+// NB: se lo sfondo è una GIF, nell'anteprima a schermo si anima normalmente,
+// ma la card condivisa/esportata sarà sempre un PNG statico (singolo frame),
+// perché la cattura di view-shot produce un'istantanea.
 //
 // Uso:
-//   <SessionShareCard ref={cardRef} session={session} />
+//   <SessionShareCard ref={cardRef} session={session} backgroundUri={bgUri} />
 //   const uri = await captureRef(cardRef, { format: "png", quality: 1 });
 //   await Share.share({ url: uri });   // iOS
 //   await Sharing.shareAsync(uri);     // Android
 
 import React, { forwardRef } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, Image, StyleSheet } from "react-native";
+import { scoreColor, scoreLabel } from "../services/fightScore";
 
 // ─────────────────────────────────────────────────────────
 // HELPERS
@@ -79,7 +86,8 @@ function zonePercents(session) {
   if (elapsed <= 0) return [];
 
   const order = ["z1", "z2", "z3", "z4", "z5"];
-  const colors = { z1: "#4FC3F7", z2: "#37E293", z3: "#FFCA28", z4: "#FF9800", z5: "#FF4D6D" };
+  // Palette "fight poster": dal blu freddo al rosso/oro incandescente
+  const colors = { z1: "#2D9CDB", z2: "#37E293", z3: "#FFCA28", z4: "#FF9500", z5: "#FF2E3E" };
   const labels = { z1: "Z1", z2: "Z2", z3: "Z3", z4: "Z4", z5: "Z5" };
 
   return order
@@ -89,39 +97,129 @@ function zonePercents(session) {
 }
 
 // ─────────────────────────────────────────────────────────
-// BARRA ZONE (mini strip colorata)
+// BARRA ZONE (power meter)
 // ─────────────────────────────────────────────────────────
 function ZoneStrip({ zones }) {
   if (!zones || zones.length === 0) return null;
   return (
-    <View style={{ flexDirection: "row", height: 6, borderRadius: 99, overflow: "hidden", width: "100%" }}>
+    <View style={zoneSt.track}>
       {zones.map((z) => (
         <View key={z.key} style={{ flex: z.pct, backgroundColor: z.color }} />
       ))}
     </View>
   );
 }
+const zoneSt = StyleSheet.create({
+  track: {
+    flexDirection: "row",
+    height: 8,
+    borderRadius: 99,
+    overflow: "hidden",
+    width: "100%",
+    borderWidth: 1,
+    borderColor: "rgba(212,175,55,0.35)",
+  },
+});
 
 // ─────────────────────────────────────────────────────────
-// KPI SINGOLO
+// RIGA "TALE OF THE TAPE"
 // ─────────────────────────────────────────────────────────
-function KpiBlock({ label, value, unit, accent }) {
+function TapeRow({ label, value, unit, last }) {
+  if (value == null) return null;
   return (
-    <View style={kpiSt.wrap}>
-      <View style={kpiSt.valueRow}>
-        <Text style={[kpiSt.value, accent && { color: accent }]}>{value}</Text>
-        {unit ? <Text style={kpiSt.unit}>{unit}</Text> : null}
+    <View style={[tapeSt.row, last && { borderBottomWidth: 0 }]}>
+      <Text style={tapeSt.label}>{label}</Text>
+      <View style={tapeSt.valueRow}>
+        <Text style={tapeSt.value}>{value}</Text>
+        {unit ? <Text style={tapeSt.unit}>{unit}</Text> : null}
       </View>
-      <Text style={kpiSt.label}>{label}</Text>
     </View>
   );
 }
-const kpiSt = StyleSheet.create({
-  wrap:     { alignItems: "center", flex: 1 },
+const tapeSt = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(212,175,55,0.18)",
+  },
+  label: {
+    color: "rgba(255,255,255,0.55)",
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  valueRow: { flexDirection: "row", alignItems: "flex-end", gap: 3 },
+  value: { color: "#fff", fontSize: 15, fontWeight: "900" },
+  unit: { color: "rgba(255,255,255,0.4)", fontSize: 10, fontWeight: "700", marginBottom: 1 },
+});
+
+// ─────────────────────────────────────────────────────────
+// PLACCA PUNTEGGIO (medaglione centrale stile cintura)
+// ─────────────────────────────────────────────────────────
+function ScorePlate({ label, value, suffix, ratingLabel, color }) {
+  return (
+    <View style={plateSt.wrap}>
+      <View style={[plateSt.outerRing, { borderColor: color }]}>
+        <View style={plateSt.innerRing}>
+          <Text style={plateSt.plateLabel}>{label}</Text>
+          <View style={plateSt.valueRow}>
+            <Text style={[plateSt.value, { color }]}>{value}</Text>
+            {suffix ? <Text style={plateSt.suffix}>{suffix}</Text> : null}
+          </View>
+          {ratingLabel ? (
+            <View style={[plateSt.ratingChip, { borderColor: color, backgroundColor: color + "22" }]}>
+              <Text style={[plateSt.ratingText, { color }]}>{ratingLabel}</Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+    </View>
+  );
+}
+const PLATE_SIZE = 152;
+const plateSt = StyleSheet.create({
+  wrap: { alignItems: "center", justifyContent: "center", marginVertical: 4 },
+  outerRing: {
+    width: PLATE_SIZE,
+    height: PLATE_SIZE,
+    borderRadius: PLATE_SIZE / 2,
+    borderWidth: 3,
+    backgroundColor: "rgba(8,8,14,0.75)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  innerRing: {
+    width: PLATE_SIZE - 16,
+    height: PLATE_SIZE - 16,
+    borderRadius: (PLATE_SIZE - 16) / 2,
+    borderWidth: 1,
+    borderColor: "rgba(212,175,55,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+  },
+  plateLabel: {
+    color: "rgba(255,255,255,0.5)",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.5,
+    textTransform: "uppercase",
+  },
   valueRow: { flexDirection: "row", alignItems: "flex-end", gap: 2 },
-  value:    { color: "#fff", fontSize: 26, fontWeight: "900", letterSpacing: -0.5 },
-  unit:     { color: "rgba(255,255,255,0.45)", fontSize: 12, fontWeight: "700", marginBottom: 4 },
-  label:    { color: "rgba(255,255,255,0.4)", fontSize: 10, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 2 },
+  value: { fontSize: 44, fontWeight: "900", letterSpacing: -1, lineHeight: 48 },
+  suffix: { color: "rgba(255,255,255,0.35)", fontSize: 14, fontWeight: "800", marginBottom: 6 },
+  ratingChip: {
+    marginTop: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 99,
+    borderWidth: 1,
+  },
+  ratingText: { fontSize: 10, fontWeight: "900", letterSpacing: 1 },
 });
 
 // ─────────────────────────────────────────────────────────
@@ -129,7 +227,14 @@ const kpiSt = StyleSheet.create({
 // ─────────────────────────────────────────────────────────
 const CARD_W = 380; // larghezza fissa per il PNG
 
-const SessionShareCard = forwardRef(function SessionShareCard({ session }, ref) {
+/**
+ * @param {object} props
+ *   session       - dati sessione
+ *   backgroundUri - uri locale (file:// o content://) di un'immagine o GIF
+ *                   scelta dall'utente da usare come sfondo della card.
+ *                   Se assente, viene usato uno sfondo scuro con banda diagonale.
+ */
+const SessionShareCard = forwardRef(function SessionShareCard({ session, backgroundUri, transparent = false }, ref) {
   if (!session) return null;
 
   const type       = sessionType(session);
@@ -137,17 +242,25 @@ const SessionShareCard = forwardRef(function SessionShareCard({ session }, ref) 
   const dur        = sessionDurationSec(session);
   const punches    = safeNum(session?.punches);
   const avgHr      = safeNum(session?.avgHr);
+  const peakHr     = safeNum(session?.hrMax);
   const calories   = safeNum(session?.calories);
   const vo2        = safeNum(session?.vo2MaxEstimate || session?.latestVo2 || 0);
   const fs         = safeNum(session?.fightScorePeak);
   const distKm     = safeNum(session?.distanceM) / 1000;
   const avgPaceSec = safeNum(session?.avgPaceSecPerKm);
+  const bestKmPaceSec = safeNum(session?.bestKmPaceSecPerKm);
   const workoutName = session?.workoutName || session?.name || (isRunning ? "Running" : "Boxing");
   const date       = shortDate(session?.date || session?.createdAt);
   const zones      = zonePercents(session);
   const domZone    = dominantZone(session);
 
-  // Formatta pace min:ss
+  // Cadenza media (colpi/min) e miglior round, utili solo per boxing
+  const cadencePpm = punches > 0 && dur > 0 ? Math.round((punches / dur) * 60) : 0;
+  const punchesByRound = Array.isArray(session?.punchesByRound) ? session.punchesByRound : [];
+  const bestRound = punchesByRound.length > 1 ? Math.max(...punchesByRound.map((n) => safeNum(n))) : 0;
+  const roundsCount = safeNum(session?.rounds);
+  const cyclesCount  = safeNum(session?.cycles);
+
   function fmtPace(sec) {
     if (!sec || sec <= 0) return "--";
     const m = Math.floor(sec / 60);
@@ -155,108 +268,129 @@ const SessionShareCard = forwardRef(function SessionShareCard({ session }, ref) 
     return `${m}:${String(s).padStart(2, "0")}`;
   }
 
+  // ── Placca centrale: Fight Score per boxing, VO2max/distanza per running ──
+  let plate = null;
+  if (!isRunning && fs > 0) {
+    const color = scoreColor(fs);
+    plate = { label: "Fight Score", value: String(Math.round(fs)), suffix: "/100", ratingLabel: scoreLabel(fs), color };
+  } else if (isRunning && vo2 > 0) {
+    plate = { label: "VO2 Max stimato", value: vo2.toFixed(1), suffix: "ml/kg/min", ratingLabel: null, color: "#FF2E3E" };
+  } else if (isRunning && distKm > 0) {
+    plate = { label: "Distanza", value: distKm.toFixed(2), suffix: "km", ratingLabel: null, color: "#FF2E3E" };
+  }
+
   return (
     <View
       ref={ref}
-      style={[cardSt.card, { width: CARD_W }]}
-      collapsable={false}  // necessario per captureRef su Android
+      style={[cardSt.card, { width: CARD_W }, transparent && cardSt.cardTransparent]}
+      collapsable={false}
     >
-      {/* SFONDO decorativo */}
-      <View style={cardSt.bgAccent} />
-
-      {/* HEADER */}
-      <View style={cardSt.header}>
-        <View style={cardSt.headerLeft}>
-          <Text style={cardSt.appName}>FIGHTCLUB</Text>
-          <Text style={cardSt.workoutName} numberOfLines={1}>{workoutName}</Text>
-          <Text style={cardSt.dateText}>{date}</Text>
-        </View>
-        <View style={[cardSt.typeBadge, isRunning && { backgroundColor: "rgba(45,156,219,0.15)", borderColor: "rgba(45,156,219,0.3)" }]}>
-          <Text style={[cardSt.typeIcon]}>{isRunning ? "🏃" : "🥊"}</Text>
-          <Text style={[cardSt.typeLabel, isRunning && { color: "#2D9CDB" }]}>
-            {isRunning ? "Running" : "Boxing"}
-          </Text>
-        </View>
-      </View>
-
-      {/* DIVIDER */}
-      <View style={cardSt.divider} />
-
-      {/* KPI PRINCIPALI */}
-      <View style={cardSt.kpiRow}>
-        <KpiBlock
-          label="Durata"
-          value={fmtTime(dur)}
-          accent="#37E293"
-        />
-        <View style={cardSt.kpiSep} />
-
-        {isRunning ? (
-          <>
-            <KpiBlock label="Distanza" value={distKm > 0 ? distKm.toFixed(2) : "--"} unit="km" />
-            <View style={cardSt.kpiSep} />
-            <KpiBlock label="Pace media" value={fmtPace(avgPaceSec)} unit="min/km" />
-          </>
+      {/* SFONDO: in modalità trasparente NON si disegna nulla (canale alpha vuoto) */}
+      {!transparent &&
+        (backgroundUri ? (
+          <Image source={{ uri: backgroundUri }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
         ) : (
-          <>
-            <KpiBlock label="Colpi" value={punches > 0 ? punches.toLocaleString("it-IT") : "--"} />
-            <View style={cardSt.kpiSep} />
-            <KpiBlock label="Calorie" value={fmt(calories)} unit="kcal" />
-          </>
-        )}
-      </View>
+          <View style={[StyleSheet.absoluteFillObject, cardSt.fallbackBg]}>
+            <View style={cardSt.diagonalBandA} />
+            <View style={cardSt.diagonalBandB} />
+          </View>
+        ))}
 
-      {/* KPI SECONDARI */}
-      <View style={cardSt.kpiRow2}>
-        {avgHr > 0 && (
-          <View style={cardSt.pill}>
-            <Text style={cardSt.pillIcon}>❤️</Text>
-            <Text style={cardSt.pillValue}>{Math.round(avgHr)}</Text>
-            <Text style={cardSt.pillUnit}>bpm</Text>
-          </View>
-        )}
-        {vo2 > 0 && (
-          <View style={cardSt.pill}>
-            <Text style={cardSt.pillIcon}>💨</Text>
-            <Text style={cardSt.pillValue}>{vo2.toFixed(1)}</Text>
-            <Text style={cardSt.pillUnit}>VO2max</Text>
-          </View>
-        )}
-        {fs > 0 && !isRunning && (
-          <View style={[cardSt.pill, { borderColor: "rgba(255,77,109,0.3)", backgroundColor: "rgba(255,77,109,0.08)" }]}>
-            <Text style={cardSt.pillIcon}>⚡</Text>
-            <Text style={[cardSt.pillValue, { color: "#FF4D6D" }]}>{Math.round(fs)}</Text>
-            <Text style={cardSt.pillUnit}>Fight Score</Text>
-          </View>
-        )}
-        {domZone && (
-          <View style={cardSt.pill}>
-            <Text style={cardSt.pillIcon}>📊</Text>
-            <Text style={[cardSt.pillValue, { fontSize: 13 }]}>{domZone}</Text>
-          </View>
-        )}
-      </View>
+      {/* OVERLAY scuro per leggibilità: SOLO quando c'è uno sfondo (non in modalità trasparente) */}
+      {!transparent && <View style={[StyleSheet.absoluteFillObject, cardSt.overlayTop]} />}
+      {!transparent && <View style={[StyleSheet.absoluteFillObject, cardSt.overlayBottom]} />}
 
-      {/* BARRA ZONE HR */}
-      {zones.length > 0 && (
-        <View style={cardSt.zonesWrap}>
-          <Text style={cardSt.zonesTitle}>Zone cardio</Text>
-          <ZoneStrip zones={zones} />
-          <View style={cardSt.zonesLegend}>
-            {zones.map((z) => (
-              <View key={z.key} style={cardSt.zoneLegendItem}>
-                <View style={[cardSt.zoneDot, { backgroundColor: z.color }]} />
-                <Text style={cardSt.zoneLegendText}>{z.label} {z.pct}%</Text>
-              </View>
-            ))}
+      {/* Cornici angolari stile poster */}
+      <View style={cardSt.cornerTL} />
+      <View style={cardSt.cornerBR} />
+
+      {/* CONTENUTO */}
+      <View style={cardSt.content}>
+        {/* RIBBON SUPERIORE */}
+        <View style={cardSt.topRibbon}>
+          <View style={cardSt.officialBadge}>
+            <Text style={cardSt.officialBadgeText}>SCHEDA UFFICIALE</Text>
+          </View>
+          <Text style={[cardSt.brand, transparent && cardSt.shadowText]}>FIGHTCLUB</Text>
+        </View>
+
+        {/* TITOLO EVENTO */}
+        <View style={cardSt.titleBlock}>
+          <Text style={cardSt.eventName} numberOfLines={2}>{workoutName}</Text>
+          <View style={cardSt.metaRow}>
+            <Text style={[cardSt.metaDate, transparent && cardSt.shadowText]}>{date}</Text>
+            <View style={cardSt.metaDot} />
+            <View style={[cardSt.typeChip, isRunning && cardSt.typeChipRunning]}>
+              <Text style={[cardSt.typeChipText, isRunning && { color: "#2D9CDB" }]}>
+                {isRunning ? "🏃 RUNNING" : "🥊 BOXING"}
+              </Text>
+            </View>
           </View>
         </View>
-      )}
 
-      {/* FOOTER */}
-      <View style={cardSt.footer}>
-        <Text style={cardSt.footerText}>fightclub.app</Text>
-        <Text style={cardSt.footerHash}>#FightClub #Boxing #Training</Text>
+        {/* PLACCA PUNTEGGIO */}
+        {plate && (
+          <ScorePlate
+            label={plate.label}
+            value={plate.value}
+            suffix={plate.suffix}
+            ratingLabel={plate.ratingLabel}
+            color={plate.color}
+          />
+        )}
+
+        {/* TALE OF THE TAPE */}
+        <View style={cardSt.tape}>
+          <Text style={cardSt.tapeTitle}>TALE OF THE TAPE</Text>
+          <TapeRow label="Durata" value={fmtTime(dur)} />
+          {isRunning ? (
+            <>
+              <TapeRow label="Distanza" value={distKm > 0 ? distKm.toFixed(2) : "--"} unit="km" />
+              <TapeRow label="Pace media" value={fmtPace(avgPaceSec)} unit="min/km" />
+              {bestKmPaceSec > 0 && <TapeRow label="Km migliore" value={fmtPace(bestKmPaceSec)} unit="min/km" />}
+              <TapeRow label="Calorie" value={fmt(calories)} unit="kcal" />
+            </>
+          ) : (
+            <>
+              <TapeRow label="Colpi totali" value={punches > 0 ? punches.toLocaleString("it-IT") : "--"} />
+              {cadencePpm > 0 && <TapeRow label="Cadenza" value={cadencePpm} unit="colpi/min" />}
+              {roundsCount > 0 && (
+                <TapeRow
+                  label="Round"
+                  value={cyclesCount > 1 ? `${roundsCount} x ${cyclesCount}` : roundsCount}
+                />
+              )}
+              {bestRound > 0 && <TapeRow label="Miglior round" value={bestRound} unit="colpi" />}
+              <TapeRow label="Calorie" value={fmt(calories)} unit="kcal" />
+            </>
+          )}
+          {avgHr > 0 && <TapeRow label="FC media" value={Math.round(avgHr)} unit="bpm" />}
+          {peakHr > 0 && <TapeRow label="FC massima" value={Math.round(peakHr)} unit="bpm" />}
+          {isRunning && vo2 > 0 && <TapeRow label="VO2 Max" value={vo2.toFixed(1)} unit="ml/kg/min" />}
+          {domZone && <TapeRow label="Zona dominante" value={domZone} last />}
+        </View>
+
+        {/* BARRA ZONE HR */}
+        {zones.length > 0 && (
+          <View style={cardSt.zonesWrap}>
+            <Text style={[cardSt.zonesTitle, transparent && cardSt.shadowText]}>Zone cardio</Text>
+            <ZoneStrip zones={zones} />
+            <View style={cardSt.zonesLegend}>
+              {zones.map((z) => (
+                <View key={z.key} style={cardSt.zoneLegendItem}>
+                  <View style={[cardSt.zoneDot, { backgroundColor: z.color }]} />
+                  <Text style={[cardSt.zoneLegendText, transparent && cardSt.shadowText]}>{z.label} {z.pct}%</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+      </View>
+
+      {/* FOOTER: banda promoter */}
+      <View style={cardSt.footerBand}>
+        <Text style={cardSt.footerText}>FIGHTCLUB.APP</Text>
+        <Text style={cardSt.footerHash}>#FightScore #Boxing #Training</Text>
       </View>
     </View>
   );
@@ -269,109 +403,158 @@ export default SessionShareCard;
 // ─────────────────────────────────────────────────────────
 const cardSt = StyleSheet.create({
   card: {
-    backgroundColor: "#080810",
+    backgroundColor: "#050508",
     borderRadius: 24,
-    padding: 24,
-    gap: 16,
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(55,226,147,0.15)",
+    borderWidth: 2,
+    borderColor: "rgba(212,175,55,0.45)",
   },
-  bgAccent: {
+
+  cardTransparent: {
+    backgroundColor: "transparent",
+  },
+  shadowText: {
+    textShadowColor: "rgba(0,0,0,0.9)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+
+  // Fallback (nessuno sfondo utente): nero + bande diagonali rosse in stile poster
+  fallbackBg: { backgroundColor: "#0A0A0F" },
+  diagonalBandA: {
     position: "absolute",
-    top: -60,
-    right: -60,
-    width: 200,
-    height: 200,
-    borderRadius: 999,
-    backgroundColor: "rgba(55,226,147,0.04)",
+    width: "180%",
+    height: 90,
+    backgroundColor: "rgba(255,46,62,0.10)",
+    top: -20,
+    left: -60,
+    transform: [{ rotate: "-8deg" }],
   },
-  header: {
+  diagonalBandB: {
+    position: "absolute",
+    width: "180%",
+    height: 60,
+    backgroundColor: "rgba(212,175,55,0.06)",
+    bottom: 40,
+    left: -80,
+    transform: [{ rotate: "-8deg" }],
+  },
+
+  // Overlay per leggibilità sopra qualsiasi sfondo (foto o GIF)
+  overlayTop: { backgroundColor: "rgba(4,4,8,0.55)" },
+  overlayBottom: {
+    top: "45%",
+    backgroundColor: "rgba(2,2,6,0.35)",
+  },
+
+  cornerTL: {
+    position: "absolute",
+    top: 0, left: 0,
+    width: 0, height: 0,
+    borderTopWidth: 46,
+    borderRightWidth: 46,
+    borderTopColor: "rgba(255,46,62,0.85)",
+    borderRightColor: "transparent",
+  },
+  cornerBR: {
+    position: "absolute",
+    bottom: 0, right: 0,
+    width: 0, height: 0,
+    borderBottomWidth: 34,
+    borderLeftWidth: 34,
+    borderBottomColor: "rgba(212,175,55,0.75)",
+    borderLeftColor: "transparent",
+  },
+
+  content: { padding: 24, paddingTop: 26, paddingBottom: 28, gap: 18 },
+
+  topRibbon: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-start",
+    alignItems: "center",
   },
-  headerLeft: { gap: 2, flex: 1 },
-  appName: {
-    color: "#37E293",
-    fontSize: 11,
+  officialBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 4,
+    backgroundColor: "rgba(255,46,62,0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(255,46,62,0.55)",
+  },
+  officialBadgeText: {
+    color: "#FF6B78",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.4,
+  },
+  brand: {
+    color: "#D4AF37",
+    fontSize: 13,
     fontWeight: "900",
     letterSpacing: 2,
+    fontStyle: "italic",
   },
-  workoutName: {
+
+  titleBlock: { gap: 6, alignItems: "center" },
+  eventName: {
     color: "#fff",
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: "900",
-    letterSpacing: -0.3,
+    letterSpacing: -0.4,
+    textTransform: "uppercase",
+    textAlign: "center",
+    fontStyle: "italic",
+    textShadowColor: "rgba(0,0,0,0.6)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
   },
-  dateText: {
-    color: "rgba(255,255,255,0.35)",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  typeBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  metaDate: { color: "rgba(255,255,255,0.6)", fontSize: 12, fontWeight: "700" },
+  metaDot: { width: 3, height: 3, borderRadius: 99, backgroundColor: "rgba(255,255,255,0.3)" },
+  typeChip: {
+    paddingHorizontal: 9,
+    paddingVertical: 3,
     borderRadius: 99,
-    backgroundColor: "rgba(55,226,147,0.1)",
+    backgroundColor: "rgba(255,46,62,0.15)",
     borderWidth: 1,
-    borderColor: "rgba(55,226,147,0.25)",
+    borderColor: "rgba(255,46,62,0.4)",
   },
-  typeIcon:  { fontSize: 14 },
-  typeLabel: { color: "#37E293", fontSize: 12, fontWeight: "800" },
+  typeChipRunning: {
+    backgroundColor: "rgba(45,156,219,0.15)",
+    borderColor: "rgba(45,156,219,0.4)",
+  },
+  typeChipText: { color: "#FF6B78", fontSize: 10, fontWeight: "900", letterSpacing: 0.5 },
 
-  divider: { height: 1, backgroundColor: "rgba(255,255,255,0.07)" },
-
-  kpiRow: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
-    paddingVertical: 4,
-  },
-  kpiSep: {
-    width: 1,
-    height: 36,
-    backgroundColor: "rgba(255,255,255,0.08)",
-  },
-
-  kpiRow2: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  pill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 10,
-    backgroundColor: "rgba(255,255,255,0.05)",
+  tape: {
+    backgroundColor: "rgba(6,6,10,0.55)",
+    borderRadius: 14,
+    padding: 16,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
+    borderColor: "rgba(212,175,55,0.3)",
   },
-  pillIcon:  { fontSize: 13 },
-  pillValue: { color: "#fff", fontSize: 15, fontWeight: "900" },
-  pillUnit:  { color: "rgba(255,255,255,0.4)", fontSize: 10, fontWeight: "700" },
+  tapeTitle: {
+    color: "#D4AF37",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.6,
+    marginBottom: 8,
+  },
 
   zonesWrap: { gap: 8 },
-  zonesTitle: { color: "rgba(255,255,255,0.4)", fontSize: 10, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5 },
-  zonesLegend: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 },
+  zonesTitle: { color: "rgba(255,255,255,0.5)", fontSize: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.8 },
+  zonesLegend: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 2 },
   zoneLegendItem: { flexDirection: "row", alignItems: "center", gap: 4 },
   zoneDot: { width: 7, height: 7, borderRadius: 99 },
-  zoneLegendText: { color: "rgba(255,255,255,0.45)", fontSize: 10, fontWeight: "700" },
+  zoneLegendText: { color: "rgba(255,255,255,0.55)", fontSize: 10, fontWeight: "700" },
 
-  footer: {
+  footerBand: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingTop: 4,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(255,255,255,0.06)",
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    backgroundColor: "rgba(255,46,62,0.9)",
   },
-  footerText: { color: "rgba(255,255,255,0.2)", fontSize: 10, fontWeight: "700", letterSpacing: 0.5 },
-  footerHash: { color: "rgba(55,226,147,0.3)", fontSize: 9, fontWeight: "700" },
+  footerText: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1 },
+  footerHash: { color: "rgba(255,255,255,0.85)", fontSize: 9, fontWeight: "700" },
 });

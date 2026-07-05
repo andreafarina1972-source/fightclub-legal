@@ -9,7 +9,9 @@ import CardioZonesChart from "../components/CardioZonesChart";
 import { zonesMeta, trainingZonesMeta } from "../services/hrZones";
 import { useHistoryData } from "../context/HistoryContext";
 import SessionShareCard from "../components/SessionShareCard";
+import ShareCardPreviewModal from "../components/ShareCardPreviewModal";
 import { useShareSession } from "../hooks/useShareSession";
+import { useShareBackground } from "../hooks/useShareBackground";
 
 // ✅ Etichette zone: tradotte + forza a capo per testi lunghi
 // Nota: mantiene compatibilità se hrZones non espone ancora labelKey
@@ -538,22 +540,56 @@ export default function HistoryScreen({ navigation }) {
     return { values, last, avg5, avgPrev5, delta, score, count: values.length };
   }, [vo2Measurements]);
 
-  // Share card per singola sessione
+  // Share card per singola sessione (stile fight poster UFC + sfondo custom)
   function ShareButton({ session }) {
     const { shareRef, handleShare, sharing } = useShareSession(session);
+    const { backgroundUri, pickBackground, removeBackground } = useShareBackground();
+    const [previewVisible, setPreviewVisible] = useState(false);
+
     return (
       <>
         {/* Card nascosta fuori schermo catturata da view-shot */}
         <View style={{ position: "absolute", left: -9999, top: 0, opacity: 0 }}>
-          <SessionShareCard ref={shareRef} session={session} />
+          <SessionShareCard ref={shareRef} session={session} backgroundUri={backgroundUri} />
         </View>
-        <Pressable
-          style={shareStyles.btn}
-          onPress={handleShare}
-          disabled={sharing}
-        >
-          <Text style={shareStyles.btnText}>{sharing ? "Generando..." : "Condividi 📤"}</Text>
-        </Pressable>
+
+        <View style={shareStyles.row}>
+          <Pressable style={shareStyles.previewBtn} onPress={() => setPreviewVisible(true)}>
+            <Text style={shareStyles.previewBtnText}>Anteprima 👁️</Text>
+          </Pressable>
+
+          <Pressable
+            style={shareStyles.btn}
+            onPress={handleShare}
+            disabled={sharing}
+          >
+            <Text style={shareStyles.btnText}>{sharing ? "Generando..." : "Condividi 📤"}</Text>
+          </Pressable>
+
+          <Pressable
+            style={shareStyles.bgBtn}
+            onPress={pickBackground}
+            onLongPress={backgroundUri ? removeBackground : undefined}
+          >
+            <Text style={shareStyles.bgBtnText}>
+              {backgroundUri ? "Cambia sfondo 🖼️" : "Aggiungi sfondo 🖼️"}
+            </Text>
+          </Pressable>
+        </View>
+        {backgroundUri ? (
+          <Text style={shareStyles.bgHint}>Tieni premuto "Cambia sfondo" per rimuoverlo</Text>
+        ) : null}
+
+        <ShareCardPreviewModal
+          visible={previewVisible}
+          onClose={() => setPreviewVisible(false)}
+          session={session}
+          backgroundUri={backgroundUri}
+          onPickBackground={pickBackground}
+          onRemoveBackground={removeBackground}
+          onShare={handleShare}
+          sharing={sharing}
+        />
       </>
     );
   }
@@ -991,8 +1027,13 @@ const styles = StyleSheet.create({
 });
 
 const shareStyles = StyleSheet.create({
-  btn: {
+  row: {
+    flexDirection: "row",
+    gap: 8,
     marginTop: 12,
+  },
+  btn: {
+    flex: 1,
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 10,
@@ -1005,5 +1046,41 @@ const shareStyles = StyleSheet.create({
     color: "#37E293",
     fontWeight: "800",
     fontSize: 14,
+  },
+  previewBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+  },
+  previewBtnText: {
+    color: "rgba(255,255,255,0.85)",
+    fontWeight: "800",
+    fontSize: 14,
+  },
+  bgBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: "rgba(212,175,55,0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(212,175,55,0.3)",
+    alignItems: "center",
+  },
+  bgBtnText: {
+    color: "#D4AF37",
+    fontWeight: "800",
+    fontSize: 14,
+  },
+  bgHint: {
+    color: "rgba(255,255,255,0.3)",
+    fontSize: 10,
+    marginTop: 4,
+    textAlign: "center",
   },
 });
