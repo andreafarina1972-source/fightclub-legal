@@ -12,6 +12,9 @@ import SessionShareCard from "../components/SessionShareCard";
 import ShareCardPreviewModal from "../components/ShareCardPreviewModal";
 import { useShareSession } from "../hooks/useShareSession";
 import { useShareBackground } from "../hooks/useShareBackground";
+import { usePro } from "../context/ProContext";
+import ProGate from "../components/ProGate";
+import AdBanner from "../components/AdBanner";
 
 // ✅ Etichette zone: tradotte + forza a capo per testi lunghi
 // Nota: mantiene compatibilità se hrZones non espone ancora labelKey
@@ -393,6 +396,7 @@ function getZonesContainer(item) {
 }
 
 export default function HistoryScreen({ navigation }) {
+  const { isPro } = usePro();
   const ctx = useHistoryData?.() || {};
   const sessions = Array.isArray(ctx.sessions) ? ctx.sessions : [];
   const vo2Measurements = Array.isArray(ctx.vo2Measurements) ? ctx.vo2Measurements : [];
@@ -555,7 +559,7 @@ export default function HistoryScreen({ navigation }) {
 
         <View style={shareStyles.row}>
           <Pressable style={shareStyles.previewBtn} onPress={() => setPreviewVisible(true)}>
-            <Text style={shareStyles.previewBtnText}>Anteprima 👁️</Text>
+            <Text style={shareStyles.previewBtnText}>{t("historyScreen.preview") || "Anteprima 👁️"}</Text>
           </Pressable>
 
           <Pressable
@@ -563,7 +567,7 @@ export default function HistoryScreen({ navigation }) {
             onPress={handleShare}
             disabled={sharing}
           >
-            <Text style={shareStyles.btnText}>{sharing ? "Generando..." : "Condividi 📤"}</Text>
+            <Text style={shareStyles.btnText}>{sharing ? (t("historyScreen.sharing") || "Generando...") : (t("historyScreen.share") || "Condividi 📤")}</Text>
           </Pressable>
 
           <Pressable
@@ -572,12 +576,12 @@ export default function HistoryScreen({ navigation }) {
             onLongPress={backgroundUri ? removeBackground : undefined}
           >
             <Text style={shareStyles.bgBtnText}>
-              {backgroundUri ? "Cambia sfondo 🖼️" : "Aggiungi sfondo 🖼️"}
+              {backgroundUri ? (t("historyScreen.changeBackground") || "Cambia sfondo 🖼️") : (t("historyScreen.addBackground") || "Aggiungi sfondo 🖼️")}
             </Text>
           </Pressable>
         </View>
         {backgroundUri ? (
-          <Text style={shareStyles.bgHint}>Tieni premuto "Cambia sfondo" per rimuoverlo</Text>
+          <Text style={shareStyles.bgHint}>{t("historyScreen.bgHint") || 'Tieni premuto "Cambia sfondo" per rimuoverlo'}</Text>
         ) : null}
 
         <ShareCardPreviewModal
@@ -622,23 +626,46 @@ export default function HistoryScreen({ navigation }) {
         style={[styles.card, selectMode && styles.cardSelectable, selected && styles.cardSelected]}
       >
         {elapsedForZones > 0 && (
-          <View style={styles.chartsWrap}>
-            <View style={styles.chartCompact}>
-              <CardioZonesChart
-                title={t("historyScreen.metabolicTitle")}
-                zones={wrapZonesLabels(zonesMeta(zonesContainer.metabolic))}
-                totalSeconds={elapsedForZones}
-              />
-            </View>
+          <ProGate
+            title={t("historyScreen.cardioZonesTitle") || "Zone cardio"}
+            teaser={
+              <View style={styles.chartsWrap}>
+                <View style={styles.chartCompact}>
+                  <CardioZonesChart
+                    title={t("historyScreen.metabolicTitle")}
+                    zones={wrapZonesLabels(zonesMeta(zonesContainer.metabolic))}
+                    totalSeconds={elapsedForZones}
+                  />
+                </View>
 
-            <View style={styles.chartCompact}>
-              <CardioZonesChart
-                title={t("historyScreen.trainingTitle")}
-                zones={wrapZonesLabels(trainingZonesMeta(zonesContainer.training))}
-                totalSeconds={elapsedForZones}
-              />
+                <View style={styles.chartCompact}>
+                  <CardioZonesChart
+                    title={t("historyScreen.trainingTitle")}
+                    zones={wrapZonesLabels(trainingZonesMeta(zonesContainer.training))}
+                    totalSeconds={elapsedForZones}
+                  />
+                </View>
+              </View>
+            }
+          >
+            <View style={styles.chartsWrap}>
+              <View style={styles.chartCompact}>
+                <CardioZonesChart
+                  title={t("historyScreen.metabolicTitle")}
+                  zones={wrapZonesLabels(zonesMeta(zonesContainer.metabolic))}
+                  totalSeconds={elapsedForZones}
+                />
+              </View>
+
+              <View style={styles.chartCompact}>
+                <CardioZonesChart
+                  title={t("historyScreen.trainingTitle")}
+                  zones={wrapZonesLabels(trainingZonesMeta(zonesContainer.training))}
+                  totalSeconds={elapsedForZones}
+                />
+              </View>
             </View>
-          </View>
+          </ProGate>
         )}
 
         <View style={styles.rowTop}>
@@ -674,6 +701,10 @@ export default function HistoryScreen({ navigation }) {
               <Pressable
                 style={styles.replayBtn}
                 onPress={() => {
+                  if (!isPro) {
+                    navigation?.navigate?.("Paywall");
+                    return;
+                  }
                   try {
                     navigation?.navigate?.("RunningReplay", { sessionId: item?.id });
                   } catch (e) {
@@ -681,7 +712,9 @@ export default function HistoryScreen({ navigation }) {
                   }
                 }}
               >
-                <Text style={styles.replayBtnText}>🗺️ Replay percorso</Text>
+                <Text style={styles.replayBtnText}>
+                  {isPro ? "🗺️ Replay percorso" : "🔒 Replay percorso — Pro"}
+                </Text>
               </Pressable>
             )}
 
@@ -750,8 +783,17 @@ export default function HistoryScreen({ navigation }) {
               </Text>
             )}
 
-            {/* Bottone condividi */}
-            <ShareButton session={item} />
+            {/* Bottone condividi (Pro) */}
+            {isPro ? (
+              <ShareButton session={item} />
+            ) : (
+              <Pressable
+                style={shareStyles.btn}
+                onPress={() => navigation?.navigate?.("Paywall")}
+              >
+                <Text style={shareStyles.btnText}>🔒 {t("historyScreen.shareLockedCta") || "Condividi la fight card — Pro"}</Text>
+              </Pressable>
+            )}
           </>
         )}
       </Pressable>
@@ -760,6 +802,7 @@ export default function HistoryScreen({ navigation }) {
 
   const ListHeader = (
     <View>
+      <AdBanner style={{ marginTop: 12 }} />
       <View style={styles.header}>
         <Text style={styles.title}>{t("history")}</Text>
 
@@ -819,33 +862,40 @@ export default function HistoryScreen({ navigation }) {
         </View>
       )}
 
-      {vo2Stats?.count >= 1 && (
-        <View style={styles.progressWrap}>
-          <View style={styles.progressHeader}>
-            <View style={styles.vo2HeaderRow}>
-              <Text style={styles.progressTitle}>VO₂ max</Text>
-              <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                {Number.isFinite(vo2Stats.score) ? <ScoreBadge value={vo2Stats.score} /> : null}
-                {vo2Stats.delta != null ? <TrendBadge delta={vo2Stats.delta} /> : null}
+      {vo2Stats?.count >= 1 && (() => {
+        const vo2Content = (
+          <View style={styles.progressWrap}>
+            <View style={styles.progressHeader}>
+              <View style={styles.vo2HeaderRow}>
+                <Text style={styles.progressTitle}>VO₂ max</Text>
+                <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                  {Number.isFinite(vo2Stats.score) ? <ScoreBadge value={vo2Stats.score} /> : null}
+                  {vo2Stats.delta != null ? <TrendBadge delta={vo2Stats.delta} /> : null}
+                </View>
               </View>
+
+              <Text style={styles.progressSub}>{t("historyScreen.vo2Last", { v: fmtVo2(vo2Stats.last) }) || `Ultimo: ${fmtVo2(vo2Stats.last)} ml/kg/min`}</Text>
+              <Text style={styles.progressSub}>{t("historyScreen.vo2Avg5", { v: fmtVo2(vo2Stats.avg5) }) || `Media ultime 5: ${fmtVo2(vo2Stats.avg5)} ml/kg/min`}</Text>
             </View>
 
-            <Text style={styles.progressSub}>{`Ultimo: ${fmtVo2(vo2Stats.last)} ml/kg/min`}</Text>
-            <Text style={styles.progressSub}>{`Media ultime 5: ${fmtVo2(vo2Stats.avg5)} ml/kg/min`}</Text>
+            <MiniLineChart
+              title={t("historyScreen.vo2TrendTitle") || "Trend VO₂ max (range 25–75)"}
+              values={vo2Stats.values}
+              formatValue={fmtVo2}
+              yMin={25}
+              yMax={75}
+              refLines={[35, 45, 55, 65]}
+            />
+
+            <Text style={styles.vo2Hint}>{t("historyScreen.vo2Measurements", { v: vo2Stats.count }) || `Misurazioni: ${vo2Stats.count}`}</Text>
           </View>
-
-          <MiniLineChart
-            title={"Trend VO₂ max (range 25–75)"}
-            values={vo2Stats.values}
-            formatValue={fmtVo2}
-            yMin={25}
-            yMax={75}
-            refLines={[35, 45, 55, 65]}
-          />
-
-          <Text style={styles.vo2Hint}>{`Misurazioni: ${vo2Stats.count}`}</Text>
-        </View>
-      )}
+        );
+        return (
+          <ProGate title={t("vo2Test.title") || "VO2 Max"} teaser={vo2Content}>
+            {vo2Content}
+          </ProGate>
+        );
+      })()}
     </View>
   );
 

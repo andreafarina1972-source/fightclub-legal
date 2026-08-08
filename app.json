@@ -15,18 +15,29 @@
         "react-native-ble-plx",
         {
           "isBackgroundEnabled": true,
-          "modes": ["central"],
+          "modes": [
+            "central"
+          ],
           "bluetoothAlwaysPermission": "Consentire a FightClub di connettersi ai dispositivi Bluetooth"
         }
       ],
       "./ant-plus-plugin",
+      "./large-heap-plugin",
       "expo-localization",
+      "expo-file-system",
       [
         "expo-image-picker",
         {
           "photosPermission": "FightClub accede alle tue foto per impostare lo sfondo della fight card da condividere."
         }
-      ]
+      ],
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-7888719103540832~2983769443"
+        }
+      ],
+      "./release-signing-plugin"
     ],
     "splash": {
       "image": "./assets/splash.png",
@@ -42,6 +53,7 @@
     },
     "android": {
       "package": "com.andrea1972.fightclub",
+      "versionCode": 9,
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",

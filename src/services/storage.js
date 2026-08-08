@@ -73,3 +73,26 @@ export async function clearShareBackground() {
     console.warn('Errore rimuovendo sfondo share card', e);
   }
 }
+
+// ─────────────────────────────────────────────────────────
+// PROFILO ATLETA (tessera d'ingresso)
+// ─────────────────────────────────────────────────────────
+const ATHLETE_KEY = 'fightclub_athlete_profile';
+
+export async function getAthleteProfile() {
+  try {
+    const json = await AsyncStorage.getItem(ATHLETE_KEY);
+    return json ? JSON.parse(json) : null;
+  } catch (e) {
+    console.warn('Errore caricando profilo atleta', e);
+    return null;
+  }
+}
+
+export async function saveAthleteProfile(profile) {
+  try {
+    await AsyncStorage.setItem(ATHLETE_KEY, JSON.stringify(profile || {}));
+  } catch (e) {
+    console.warn('Errore salvando profilo atleta', e);
+  }
+}

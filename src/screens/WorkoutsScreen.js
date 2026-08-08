@@ -7,6 +7,7 @@ import GarminHeader from "../components/GarminHeader";
 import { t } from "../i18n";
 import WorkoutItem from "./WorkoutItem";
 import { useWorkouts } from "../context/WorkoutContext";
+import AdBanner from "../components/AdBanner";
 
 export default function WorkoutsScreen({ navigation }) {
   const { workouts, removeWorkout } = useWorkouts();
@@ -63,6 +64,7 @@ export default function WorkoutsScreen({ navigation }) {
                 onDelete={() => handleDelete(item.id)}
               />
             )}
+            ListFooterComponent={<AdBanner style={{ marginTop: 12 }} />}
           />
         )}
       </View>

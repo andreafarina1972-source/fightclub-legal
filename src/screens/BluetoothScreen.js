@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Alert } from "react-native";
 import GarminHeader from "../components/GarminHeader";
+import { usePro } from "../context/ProContext";
 
 
 import { t } from "../i18n";
@@ -15,7 +16,8 @@ import {
   subscribeHeartRate,
 } from "../services/heartRateService";
 
-export default function BluetoothScreen() {
+export default function BluetoothScreen({ navigation }) {
+  const { isPro } = usePro();
   const [devices, setDevices] = useState([]);
   const [status, setStatus] = useState("idle"); // idle | scanning | done
   const [defaultDev, setDefaultDev] = useState(null);
@@ -85,6 +87,10 @@ export default function BluetoothScreen() {
 
   const doConnect = async () => {
     if (connectingRef.current) return;
+    if (!isPro) {
+      navigation?.navigate?.("Paywall");
+      return;
+    }
 
     connectingRef.current = true;
     setHrStatus("scanning");

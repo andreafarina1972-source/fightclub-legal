@@ -4,6 +4,7 @@
 // FIX: usa punchDetector reale invece dello stub audioPunchCounter
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import GarminHeader from '../components/GarminHeader';
 import TimerDisplay from '../components/TimerDisplay';
 import { t } from '../i18n';
@@ -15,6 +16,7 @@ import { useHistoryData } from '../context/HistoryContext';
 import { estimateCalories } from '../services/metrics';
 // FIX VO2: usa estimateVo2Max da vo2Utils (formula Uth validata, allineata con HomeScreen)
 import { estimateVo2Max } from '../services/vo2Utils';
+import { getAthleteAge } from '../services/hrZones';
 import { startPunchDetection, stopPunchDetection } from '../services/punchDetector';
 
 export default function WorkoutRunScreen({ route, navigation }) {
@@ -33,6 +35,17 @@ export default function WorkoutRunScreen({ route, navigation }) {
   const [cycle, setCycle] = useState(1);
   const intervalRef = useRef(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  // FIX VO2: età e HR a riposo reali (dalle Settings), non più 30/60 fissi per tutti
+  const [athleteAge, setAthleteAge] = useState(30);
+  const [athleteHrRest, setAthleteHrRest] = useState(60);
+  useEffect(() => {
+    getAthleteAge().then((a) => { if (a != null) setAthleteAge(a); }).catch(() => {});
+    AsyncStorage.getItem('hrRest').then((v) => {
+      const n = Number(v);
+      if (Number.isFinite(n) && n >= 30 && n <= 100) setAthleteHrRest(n);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!workout) {
@@ -159,8 +172,8 @@ export default function WorkoutRunScreen({ route, navigation }) {
 
     const durationMinutes = elapsedSeconds / 60;
     const calories = Math.round(estimateCalories(durationMinutes));
-    // FIX VO2: formula Uth (15.3 × HRmax/HRrest) allineata con HomeScreen
-    const vo2 = estimateVo2Max(heartRate || 130, 30, 60);
+    // FIX VO2: formula Uth (15.3 × HRmax/HRrest) allineata con HomeScreen — età e HR a riposo reali
+    const vo2 = estimateVo2Max(heartRate || 130, athleteAge, athleteHrRest);
 
     // FIX #13: salva in HistoryContext (visibile in HomeScreen e HistoryScreen)
     addSession({

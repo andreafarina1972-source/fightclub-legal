@@ -4,7 +4,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   Switch,
   TouchableOpacity,
   ScrollView,
@@ -13,7 +12,9 @@ import {
   Modal,
   Pressable,
   FlatList,
+  Linking,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Audio } from "expo-av";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import GlassCard from "../components/ui/GlassCard";
@@ -30,6 +31,8 @@ import {
   setProvider, loadProvider, AI_PROVIDERS, detectProvider,
 } from "../services/aiCoach";
 import { setSoundEnabledSingle, playBeep, playGong, playCount1 } from "../services/soundManager";
+import { usePro } from "../context/ProContext";
+import AdBanner from "../components/AdBanner";
 
 // ✅ i18n
 import { t, i18n, SUPPORTED_LANGUAGES } from "../i18n";
@@ -41,8 +44,13 @@ import { getVoiceCoachEnabled, setVoiceCoachEnabled } from "../services/voiceCoa
 // FIX: chiave allineata a hrZones.js (AGE_KEY = "athleteAge")
 // Prima era "userAge" → getAthleteAge() non leggeva mai l'età impostata dall'utente
 const USER_AGE_KEY = "athleteAge";
+// Stessa chiave già letta (ma mai scritta finora) da HomeScreen.js per la stima VO2max
+const HR_REST_KEY = "hrRest";
+const PRIVACY_POLICY_URL = "https://andreafarina1972-source.github.io/fightclub-legal/";
 
-export default function SettingsScreen() {
+export default function SettingsScreen({ navigation }) {
+  const { isPro, restore } = usePro();
+
   // ✅ LINGUA (globale via provider)
   const { lang, setLang: setAppLang } = useLanguage();
 
@@ -64,6 +72,11 @@ export default function SettingsScreen() {
   const [userAge, setUserAge] = useState(30);
   const [userAgeText, setUserAgeText] = useState("30");
   const saveAgeTimer = useRef(null);
+
+  // ❤️ PROFILO ATLETA: frequenza cardiaca a riposo (bpm) — usata dalla stima VO2max (formula Uth)
+  const [restingHr, setRestingHr] = useState(60);
+  const [restingHrText, setRestingHrText] = useState("60");
+  const saveHrRestTimer = useRef(null);
 
   // calibrazione
   const [calibrated, setCalibrated] = useState(false);
@@ -149,6 +162,20 @@ export default function SettingsScreen() {
       } else {
         setUserAge(30);
         setUserAgeText("30");
+      }
+
+      // ❤️ carica HR a riposo (stessa chiave "hrRest" letta da HomeScreen/WorkoutRunScreen)
+      const savedHrRestRaw = await AsyncStorage.getItem(HR_REST_KEY);
+      if (savedHrRestRaw !== null) {
+        const h = parseInt(savedHrRestRaw, 10);
+        if (Number.isFinite(h)) {
+          const safeH = clampInt(h, 30, 100);
+          setRestingHr(safeH);
+          setRestingHrText(String(safeH));
+        }
+      } else {
+        setRestingHr(60);
+        setRestingHrText("60");
       }
     } catch (err) {
       console.log("Errore caricamento impostazioni:", err);
@@ -257,6 +284,23 @@ export default function SettingsScreen() {
     }, 220);
   };
 
+  const onChangeHrRestText = (txt) => {
+    const onlyDigits = String(txt || "").replace(/[^\d]/g, "");
+    setRestingHrText(onlyDigits);
+
+    if (saveHrRestTimer.current) clearTimeout(saveHrRestTimer.current);
+    saveHrRestTimer.current = setTimeout(async () => {
+      if (!onlyDigits) {
+        await AsyncStorage.removeItem(HR_REST_KEY);
+        return;
+      }
+      const h = clampInt(parseInt(onlyDigits, 10), 30, 100);
+      setRestingHr(h);
+      setRestingHrText(String(h));
+      await AsyncStorage.setItem(HR_REST_KEY, String(h));
+    }, 220);
+  };
+
   // ❤️ HR
   const handleConnectHr = async () => {
     try {
@@ -323,11 +367,36 @@ export default function SettingsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <View style={styles.root}>
           <Text style={styles.title}>{t("settings")}</Text>
           <SoundLevelVisualizer active={visualizerActive} />
+
+          {/* ⭐ PRO */}
+          <GlassCard>
+            <Text style={styles.label}>FightClub Pro</Text>
+            {!isPro && (
+              <TouchableOpacity
+                style={[styles.profileBtn, { backgroundColor: "#0d1f14", borderColor: "#37E293" }]}
+                onPress={() => navigation?.navigate?.("Paywall")}
+              >
+                <Text style={[styles.profileText, { color: "#37E293" }]}>⭐ {t("settingsScreen.goPro") || "Passa a FightClub Pro"}</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={styles.profileBtn}
+              onPress={async () => {
+                const ok = await restore();
+                Alert.alert(
+                  ok ? (t("settingsScreen.restoredTitle") || "Ripristinato") : (t("settingsScreen.restoreNoneTitle") || "Nessun acquisto"),
+                  ok ? (t("settingsScreen.restoredBody") || "Il tuo abbonamento Pro è attivo.") : (t("settingsScreen.restoreNoneBody") || "Non abbiamo trovato acquisti da ripristinare.")
+                );
+              }}
+            >
+              <Text style={styles.profileText}>{t("settingsScreen.restorePurchases") || "Ripristina acquisti"}</Text>
+            </TouchableOpacity>
+          </GlassCard>
 
           {/* ✅ LINGUA: dropdown */}
           <GlassCard>
@@ -435,6 +504,25 @@ export default function SettingsScreen() {
             </View>
 
             <Text style={styles.subSmall}>{t("settingsScreen.validRange")}</Text>
+
+            <Text style={[styles.sub, { marginTop: 14 }]}>{t("settingsScreen.restingHrDesc")}</Text>
+            <View style={styles.ageRow}>
+              <TextInput
+                value={restingHrText}
+                onChangeText={onChangeHrRestText}
+                placeholder="60"
+                placeholderTextColor="#666"
+                keyboardType="number-pad"
+                maxLength={3}
+                style={styles.ageInput}
+              />
+              <View style={styles.agePill}>
+                <Text style={styles.agePillText}>
+                  {t("settingsScreen.restingHrBpm", { n: restingHr })}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.subSmall}>{t("settingsScreen.restingHrValidRange")}</Text>
           </GlassCard>
 
           {/* 🎧 PROFILI AUDIO */}
@@ -566,11 +654,11 @@ export default function SettingsScreen() {
 
           {/* AI COACH API KEY */}
           <GlassCard>
-            <Text style={styles.label}>AI Coach</Text>
+            <Text style={styles.label}>{t("settingsScreen.aiCoachBadge") || "AI Coach"}</Text>
 
             {/* Selettore provider */}
             <Text style={[styles.sub, { marginBottom: 6 }]}>
-              Provider AI — scegli quello gratuito:
+              {t("settingsScreen.aiProviderLabel") || "Provider AI — scegli quello gratuito:"}
             </Text>
             <View style={{ gap: 6, marginBottom: 12 }}>
               {Object.entries(AI_PROVIDERS).map(([key, p]) => (
@@ -585,9 +673,9 @@ export default function SettingsScreen() {
                 >
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.sub, { fontWeight: "700", color: aiProvider === key ? "#37E293" : "#fff" }]}>
-                      {p.name}
+                      {t(`aiCoach.${key}Name`) || p.name}
                     </Text>
-                    <Text style={[styles.sub, { fontSize: 11, color: "#666", marginTop: 2 }]}>{p.hint}</Text>
+                    <Text style={[styles.sub, { fontSize: 11, color: "#666", marginTop: 2 }]}>{t(`settingsScreen.${key}Hint`) || p.hint}</Text>
                   </View>
                   {aiProvider === key && (
                     <Text style={{ color: "#37E293", fontSize: 18, marginLeft: 8, fontWeight: "900" }}>✓</Text>
@@ -615,13 +703,13 @@ export default function SettingsScreen() {
                 style={styles.agePill}
                 onPress={() => setApiKeyVisible(v => !v)}
               >
-                <Text style={styles.agePillText}>{apiKeyVisible ? "Nascondi" : "Mostra"}</Text>
+                <Text style={styles.agePillText}>{apiKeyVisible ? (t("common.hide") || "Nascondi") : (t("common.show") || "Mostra")}</Text>
               </TouchableOpacity>
             </View>
 
             <View style={styles.row}>
               <Text style={[styles.sub, { flex: 1, color: apiKeySaved ? "#37E293" : "#8E8E99" }]}>
-                {apiKeySaved ? "Chiave salvata" : "Nessuna chiave salvata"}
+                {apiKeySaved ? (t("settingsScreen.apiKeySaved") || "Chiave salvata") : (t("settingsScreen.apiKeyNotSaved") || "Nessuna chiave salvata")}
               </Text>
               <View style={{ flexDirection: "row", gap: 8 }}>
                 {apiKeySaved && (
@@ -629,7 +717,7 @@ export default function SettingsScreen() {
                     style={[styles.agePill, { backgroundColor: "rgba(226,55,89,0.1)" }]}
                     onPress={async () => { await clearApiKey(); setApiKeyState(""); setApiKeySaved(false); }}
                   >
-                    <Text style={[styles.agePillText, { color: "#E23759" }]}>Rimuovi</Text>
+                    <Text style={[styles.agePillText, { color: "#E23759" }]}>{t("common.remove") || "Rimuovi"}</Text>
                   </TouchableOpacity>
                 )}
                 <TouchableOpacity
@@ -637,7 +725,7 @@ export default function SettingsScreen() {
                   onPress={async () => {
                     const key = apiKey.trim();
                     if (key.length < 10) {
-                      Alert.alert("Chiave non valida", "Inserisci una chiave API valida.");
+                      Alert.alert(t("settingsScreen.apiKeyInvalidTitle") || "Chiave non valida", t("settingsScreen.apiKeyInvalidBody") || "Inserisci una chiave API valida.");
                       return;
                     }
                     // auto-rileva provider dalla chiave
@@ -645,17 +733,18 @@ export default function SettingsScreen() {
                     if (detected) { setAiProviderState(detected); await setProvider(detected); }
                     await setApiKey(key);
                     setApiKeySaved(true);
-                    const provName = AI_PROVIDERS[detected || aiProvider]?.name || "";
-                    Alert.alert("Salvata!", "Chiave " + provName + " salvata correttamente.");
+                    const provKey = detected || aiProvider;
+                    const provName = t(`aiCoach.${provKey}Name`) || AI_PROVIDERS[provKey]?.name || "";
+                    Alert.alert(t("settingsScreen.apiKeySavedAlertTitle") || "Salvata!", t("settingsScreen.apiKeySavedAlertBody", { provider: provName }) || ("Chiave " + provName + " salvata correttamente."));
                   }}
                 >
-                  <Text style={styles.profileText}>Salva</Text>
+                  <Text style={styles.profileText}>{t("common.save") || "Salva"}</Text>
                 </TouchableOpacity>
               </View>
             </View>
 
             <Text style={[styles.sub, { color: "#555", fontSize: 11, marginTop: 4 }]}>
-              La chiave viene rilevata automaticamente dal formato (gsk_=Groq, AIza=Gemini, sk-=Anthropic).
+              {t("settingsScreen.apiKeyFormatHint") || "La chiave viene rilevata automaticamente dal formato (gsk_=Groq, AIza=Gemini, sk-=Anthropic)."}
             </Text>
           </GlassCard>
 
@@ -692,6 +781,19 @@ export default function SettingsScreen() {
               </Text>
             </TouchableOpacity>
           </GlassCard>
+
+          {/* PRIVACY */}
+          <GlassCard>
+            <Text style={styles.label}>{t("common.privacy") || "Privacy"}</Text>
+            <TouchableOpacity
+              style={styles.profileBtn}
+              onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
+            >
+              <Text style={styles.profileText}>{t("settingsScreen.privacyPolicyButton") || "Informativa sulla Privacy"}</Text>
+            </TouchableOpacity>
+          </GlassCard>
+
+          <AdBanner style={{ marginTop: 4 }} />
         </View>
       </ScrollView>
     </SafeAreaView>

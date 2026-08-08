@@ -4,17 +4,18 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   Pressable,
   ScrollView,
   Alert,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 
 import { Svg, Circle } from "react-native-svg";
 import { speakRoundStart } from "../services/voiceCoach";
 import { useFightScore } from "../services/fightScore";
 import FightScoreBadge from "../components/FightScoreBadge";
+import ProGate from "../components/ProGate";
 import { speakCornermanFeedback } from "../services/cornermanAI";
 import { loadSounds } from "../services/soundManager";
 import { t } from "../i18n";
@@ -52,13 +53,20 @@ const sumArr = (arr) =>
 
 export default function TimerScreen({ route }) {
   const workout = route?.params?.workout || {};
+  const autoStart = route?.params?.autoStart === true;
+
+  // ✅ round/cicli regolabili dall'utente prima di avviare (non fissi come prima)
+  const [roundsOverride, setRoundsOverride] = useState(workout.rounds ?? 3);
+  const [cyclesOverride, setCyclesOverride] = useState(workout.cycles ?? 1);
 
   const config = {
-    prep: workout.prep ?? 10,
+    // clamp difensivo: "prep" è solo il conto alla rovescia pre-round 1, non deve
+    // mai diventare un secondo timer nascosto (es. piani AI con dati malformati/vecchi)
+    prep: Math.min(30, workout.prep ?? 10),
     round: workout.round ?? 180,
     rest: workout.rest ?? 60,
-    rounds: workout.rounds ?? 3,
-    cycles: workout.cycles ?? 1,
+    rounds: roundsOverride,
+    cycles: cyclesOverride,
     cycleRest: workout.cycleRest ?? 120,
     name: workout.name ?? t("timerScreen.workoutDefault"),
   };
@@ -124,14 +132,20 @@ export default function TimerScreen({ route }) {
   }, [hrMax]);
 
   const lastAnnouncedRoundRef = useRef(null);
+  // ✅ tiene anche il ciclo in cui quel round è stato annunciato: con rounds=1
+  // e più cicli, il numero di round da solo (sempre "1") non basta a capire
+  // se è un round nuovo o lo stesso già annunciato nel ciclo precedente.
+  const lastAnnouncedCycleRef = useRef(null);
   useEffect(() => {
     if (phase === "idle") {
       lastAnnouncedRoundRef.current = null;
+      lastAnnouncedCycleRef.current = null;
       return;
     }
     if (String(phase || "").toLowerCase() === "round" && Number.isFinite(round)) {
-      if (lastAnnouncedRoundRef.current !== round) {
+      if (lastAnnouncedRoundRef.current !== round || lastAnnouncedCycleRef.current !== cycle) {
         lastAnnouncedRoundRef.current = round;
+        lastAnnouncedCycleRef.current = cycle;
         speakRoundStart(round);
         // reset HR stats per il nuovo round
         hrPeakRef.current = null;
@@ -139,7 +153,7 @@ export default function TimerScreen({ route }) {
         hrSamplesRef.current = 0;
       }
     }
-  }, [phase, round]);
+  }, [phase, round, cycle]);
 
   // Cornerman AI: feedback vocale all'inizio della pausa (subito dopo il round)
   const lastCornermanRoundRef = useRef(null);
@@ -150,9 +164,21 @@ export default function TimerScreen({ route }) {
       String(phase || "").toLowerCase() === "finish";
 
     if (!isResting) return;
+
+    // ✅ il round "appena finito" NON è più `round`: l'hook useFightTimer
+    // incrementa già roundIndex (o lo resetta a 1 a fine ciclo) PRIMA di
+    // avviare la fase di riposo, quindi a questo punto `round` punta già
+    // alla ripresa successiva. Usiamo invece l'ultimo round effettivamente
+    // annunciato/iniziato, che è quello che si è appena concluso (e il ciclo
+    // in cui è avvenuto, altrimenti con rounds=1 e più cicli il numero da
+    // solo è sempre "1" e il feedback del ciclo successivo verrebbe
+    // scambiato per un duplicato e saltato).
+    const completedRound = lastAnnouncedRoundRef.current ?? round;
+    const completedKey = `${lastAnnouncedCycleRef.current ?? cycle}:${completedRound}`;
+
     // evita di ripetere il feedback per lo stesso round
-    if (lastCornermanRoundRef.current === round) return;
-    lastCornermanRoundRef.current = round;
+    if (lastCornermanRoundRef.current === completedKey) return;
+    lastCornermanRoundRef.current = completedKey;
 
     const punchesThisRound =
       Array.isArray(punchesByRound) && punchesByRound.length > 0
@@ -165,7 +191,7 @@ export default function TimerScreen({ route }) {
         : null;
 
     speakCornermanFeedback({
-      roundNumber:      round,
+      roundNumber:      completedRound,
       totalRounds:      config.rounds,
       punchesThisRound: punchesThisRound,
       punchesTotal:     punchCount,
@@ -345,6 +371,16 @@ if (String(phase || "").toLowerCase() === "round" && isFirstRound && seconds <= 
 
   const strokeDashoffset = CIRCUMFERENCE * (1 - progress);
 
+  const adjustRounds = useCallback((delta) => {
+    if (phase !== "idle") return;
+    setRoundsOverride((prev) => Math.max(1, Math.min(30, prev + delta)));
+  }, [phase]);
+
+  const adjustCycles = useCallback((delta) => {
+    if (phase !== "idle") return;
+    setCyclesOverride((prev) => Math.max(1, Math.min(10, prev + delta)));
+  }, [phase]);
+
   const handleStart = useCallback(async () => {
     if (phase !== "idle") return;
 
@@ -363,6 +399,15 @@ if (String(phase || "").toLowerCase() === "round" && isFirstRound && seconds <= 
       setHrStatus("disconnected");
     }
   }, [phase, resetZones, start, startSampling]);
+
+  // Avvio automatico quando si arriva da "Avvia ora" / "Avvia sessione di oggi"
+  // (l'utente ha già premesso "Avvia": non deve premere Start una seconda volta)
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (!autoStart || autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    handleStart();
+  }, [autoStart, handleStart]);
 
   const handleStop = useCallback(() => {
     if (phase === "idle") return;
@@ -405,11 +450,7 @@ if (String(phase || "").toLowerCase() === "round" && isFirstRound && seconds <= 
           addSession({
             id: Date.now().toString(),
             workoutId: workout.id || null,
-            workoutName: workout.name
-              ? t("timerScreen.workoutInterrupted", { name: workout.name })
-              : t("timerScreen.workoutInterrupted", {
-                  name: t("timerScreen.workoutDefault"),
-                }),
+            workoutName: workout.name || t("timerScreen.workoutDefault"),
             date: new Date().toISOString(),
             totalMinutes: Math.round(totalSeconds / 60),
             totalSeconds,
@@ -485,7 +526,7 @@ if (String(phase || "").toLowerCase() === "round" && isFirstRound && seconds <= 
       : t("home.hrOffDot");
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
       <View style={[styles.phaseBar, { backgroundColor: barColor }]} />
 
       {/* ✅ wrapper flex:1 per avere Scroll + footer fisso */}
@@ -493,6 +534,36 @@ if (String(phase || "").toLowerCase() === "round" && isFirstRound && seconds <= 
         <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scroll}>
           <Text style={styles.title}>{config.name}</Text>
           <Text style={styles.subTitle}>{subTitleText}</Text>
+
+          {phase === "idle" && (
+            <View style={styles.adjustRow}>
+              <View style={styles.adjustGroup}>
+                <Text style={styles.adjustLabel}>{t("workoutBuilder.rounds", { defaultValue: "Round" })}</Text>
+                <View style={styles.adjustControls}>
+                  <Pressable style={styles.adjustBtn} onPress={() => adjustRounds(-1)}>
+                    <Text style={styles.adjustBtnText}>-</Text>
+                  </Pressable>
+                  <Text style={styles.adjustValue}>{roundsOverride}</Text>
+                  <Pressable style={styles.adjustBtn} onPress={() => adjustRounds(1)}>
+                    <Text style={styles.adjustBtnText}>+</Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              <View style={styles.adjustGroup}>
+                <Text style={styles.adjustLabel}>{t("workoutBuilder.cycles", { defaultValue: "Cicli" })}</Text>
+                <View style={styles.adjustControls}>
+                  <Pressable style={styles.adjustBtn} onPress={() => adjustCycles(-1)}>
+                    <Text style={styles.adjustBtnText}>-</Text>
+                  </Pressable>
+                  <Text style={styles.adjustValue}>{cyclesOverride}</Text>
+                  <Pressable style={styles.adjustBtn} onPress={() => adjustCycles(1)}>
+                    <Text style={styles.adjustBtnText}>+</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          )}
 
           {/* CERCHIO */}
           <View style={styles.timerWrap}>
@@ -521,14 +592,19 @@ if (String(phase || "").toLowerCase() === "round" && isFirstRound && seconds <= 
           {/* ✅ SOTTO IL CERCHIO: COLPI */}
           <Text style={styles.punchesText}>{t("timerScreen.punches", { n: punchCount })}</Text>
 
-          {/* FIGHT SCORE BADGE */}
-          <FightScoreBadge scoreData={fightScore} phase={phase} />
-
-          {/* resto UI */}
+          {/* HR */}
           <Text style={styles.hrText}>
             {t("timerScreen.hrLine", { hr: hr ? `${hr} bpm` : "--" })}{" "}
             <Text style={styles.hrStatus}>{hrStatusText}</Text>
           </Text>
+
+          {/* FIGHT SCORE BADGE */}
+          <ProGate
+            title={t("fightScore.title") || "Fight Score"}
+            teaser={<FightScoreBadge scoreData={fightScore} phase={phase} />}
+          >
+            <FightScoreBadge scoreData={fightScore} phase={phase} />
+          </ProGate>
 
           {zonesLive.elapsed > 5 && (
             <View style={{ width: "100%" }}>
@@ -573,6 +649,27 @@ const styles = StyleSheet.create({
   title: { color: "#fff", fontSize: 22, fontWeight: "700", marginBottom: 6 },
 
   subTitle: { color: "#aaa", fontSize: 16, fontWeight: "600", marginBottom: 20 },
+
+  adjustRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 28,
+    marginBottom: 20,
+  },
+  adjustGroup: { alignItems: "center" },
+  adjustLabel: { color: "#aaa", fontSize: 13, marginBottom: 6 },
+  adjustControls: { flexDirection: "row", alignItems: "center" },
+  adjustBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#444",
+  },
+  adjustBtnText: { color: "#fff", fontSize: 18, fontWeight: "700" },
+  adjustValue: { color: "#fff", fontSize: 18, fontWeight: "700", marginHorizontal: 14, minWidth: 20, textAlign: "center" },
 
   timerWrap: {
     width: 260,

@@ -28,6 +28,17 @@ export function getHrZones(age = 35) {
   };
 }
 
+// Percentuale minima di HRmax richiesta durante il test perché la misurazione sia
+// considerata attendibile. La letteratura sui test HR-based (es. protocolli submassimali
+// ACSM) richiede tipicamente uno sforzo che porti la FC ad almeno l'85% della FC massima:
+// sotto quella soglia l'estrapolazione della capacità aerobica diventa troppo imprecisa.
+const VO2_TEST_MIN_HR_RATIO = 0.85;
+
+/** FC minima (bpm) che il test deve raggiungere per essere considerato valido. */
+export function getVo2TestMinHr(age = 35) {
+  return Math.round(VO2_TEST_MIN_HR_RATIO * estimateHrMax(age));
+}
+
 // ------------------------------------------------------------------
 // VO2max — formula Uth et al. 2004
 //   VO2max = 15.3 × (HRmax / HRrest)
@@ -45,8 +56,11 @@ export function estimateVo2Max(avgHr, age = 35, hrRest = 60) {
   const hrMax = estimateHrMax(age);
   const rest  = Math.max(30, Math.min(100, Number(hrRest) || 60));
 
-  // Guardia: HR media troppo bassa per un test valido
-  if (!avgHr || avgHr < 80) return null;
+  // Guardia: la FC media durante il test deve raggiungere almeno l'85% della FC
+  // massima stimata (vedi getVo2TestMinHr) — sotto quella soglia la stima non è
+  // scientificamente attendibile, indipendentemente dall'età dell'atleta.
+  const minHr = getVo2TestMinHr(age);
+  if (!avgHr || avgHr < minHr) return null;
 
   // Uth: 15.3 × (HRmax / HRrest)
   const vo2 = 15.3 * (hrMax / rest);

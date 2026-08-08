@@ -4,12 +4,14 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   Pressable,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useHistoryData } from "../context/HistoryContext";
 import { computeBadges, computeStats, BADGE_DEFINITIONS } from "../services/badgeEngine";
+import ProGate from "../components/ProGate";
+import { t } from "../i18n";
 
 // ─────────────────────────────────────────────────────────
 // BARRA DI PROGRESSO
@@ -93,8 +95,8 @@ function StreakBanner({ currentStreak, longestStreak }) {
       <View style={streakStyles.card}>
         <Text style={streakStyles.icon}>❄️</Text>
         <View>
-          <Text style={streakStyles.label}>Nessuno streak attivo</Text>
-          <Text style={streakStyles.sub}>Allena oggi per iniziare!</Text>
+          <Text style={streakStyles.label}>{t("badges.noStreak") || "Nessuno streak attivo"}</Text>
+          <Text style={streakStyles.sub}>{t("badges.noStreakSub") || "Allena oggi per iniziare!"}</Text>
         </View>
       </View>
     );
@@ -105,9 +107,9 @@ function StreakBanner({ currentStreak, longestStreak }) {
       <View style={{ flex: 1 }}>
         <Text style={streakStyles.label}>
           <Text style={streakStyles.value}>{currentStreak}</Text>
-          {" "}giorni consecutivi
+          {" "}{t("badges.streakDays") || "giorni consecutivi"}
         </Text>
-        <Text style={streakStyles.sub}>Record personale: {longestStreak} giorni</Text>
+        <Text style={streakStyles.sub}>{t("badges.streakRecord", { n: longestStreak }) || `Record personale: ${longestStreak} giorni`}</Text>
       </View>
     </View>
   );
@@ -149,24 +151,21 @@ const pillStyles = StyleSheet.create({
 });
 
 // ─────────────────────────────────────────────────────────
-// CATEGORIE BADGE
-// ─────────────────────────────────────────────────────────
-const CATEGORIES = [
-  { key: "all",      label: "Tutti" },
-  { key: "punches",  label: "Colpi" },
-  { key: "streak",   label: "Streak" },
-  { key: "vo2",      label: "VO2max" },
-  { key: "sessions", label: "Sessioni" },
-  { key: "running",  label: "Running" },
-  { key: "score",    label: "Fight Score" },
-];
-
-// ─────────────────────────────────────────────────────────
 // SCHERMATA PRINCIPALE
 // ─────────────────────────────────────────────────────────
 export default function BadgesScreen() {
   const { sessions, vo2Measurements } = useHistoryData();
   const [activeCategory, setActiveCategory] = useState("all");
+
+  const CATEGORIES = [
+    { key: "all",      label: t("badges.cat.all") || "Tutti" },
+    { key: "punches",  label: t("badges.cat.punches") || "Colpi" },
+    { key: "streak",   label: t("badges.cat.streak") || "Streak" },
+    { key: "vo2",      label: t("badges.cat.vo2") || "VO2max" },
+    { key: "sessions", label: t("badges.cat.sessions") || "Sessioni" },
+    { key: "running",  label: t("badges.cat.running") || "Running" },
+    { key: "score",    label: t("badges.cat.score") || "Fight Score" },
+  ];
 
   const badges = useMemo(
     () => computeBadges(sessions, vo2Measurements),
@@ -193,12 +192,13 @@ export default function BadgesScreen() {
   const totalCount    = badges.length;
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <ProGate title={t("badges.title") || "Badge"} fullscreen>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
       <ScrollView contentContainerStyle={styles.scroll}>
 
         {/* HEADER */}
-        <Text style={styles.title}>Badge e Progressi</Text>
-        <Text style={styles.sub}>{unlockedCount} / {totalCount} badge sbloccati</Text>
+        <Text style={styles.title}>{t("badges.title") || "Badge e Progressi"}</Text>
+        <Text style={styles.sub}>{unlockedCount} / {totalCount} {t("badges.unlockedCount") || "badge sbloccati"}</Text>
 
         {/* BARRA GLOBALE */}
         <View style={styles.globalBarWrap}>
@@ -216,10 +216,10 @@ export default function BadgesScreen() {
 
         {/* KPI RAPIDI */}
         <View style={styles.pillRow}>
-          <StatPill label="Colpi totali"  value={stats.totalPunches.toLocaleString()} />
-          <StatPill label="Sessioni"      value={stats.totalSessions} />
-          <StatPill label="km corsa"      value={stats.totalRunningKm.toFixed(0)} />
-          <StatPill label="VO2max"        value={stats.maxVo2 > 0 ? stats.maxVo2 : "--"} />
+          <StatPill label={t("badges.statPunches") || "Colpi totali"}  value={stats.totalPunches.toLocaleString()} />
+          <StatPill label={t("badges.statSessions") || "Sessioni"}      value={stats.totalSessions} />
+          <StatPill label={t("badges.statKm") || "km corsa"}      value={stats.totalRunningKm.toFixed(0)} />
+          <StatPill label={t("badges.statVo2") || "VO2max"}        value={stats.maxVo2 > 0 ? stats.maxVo2 : "--"} />
         </View>
 
         {/* FILTRO CATEGORIA */}
@@ -253,7 +253,7 @@ export default function BadgesScreen() {
 
         {/* LISTA BADGE */}
         {filtered.length === 0 ? (
-          <Text style={styles.empty}>Nessun badge in questa categoria.</Text>
+          <Text style={styles.empty}>{t("badges.emptyCategory") || "Nessun badge in questa categoria."}</Text>
         ) : (
           <View style={styles.badgeList}>
             {filtered.map((b) => (
@@ -264,6 +264,7 @@ export default function BadgesScreen() {
 
       </ScrollView>
     </SafeAreaView>
+    </ProGate>
   );
 }
 

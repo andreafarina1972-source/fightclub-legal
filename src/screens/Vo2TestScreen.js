@@ -4,13 +4,14 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TextInput,
   Pressable,
   Alert,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useHistoryData } from "../context/HistoryContext";
+import ProGate from "../components/ProGate";
 
 // ✅ i18n
 import { t } from "../i18n";
@@ -112,7 +113,8 @@ export default function Vo2TestScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <ProGate title={t("vo2Test.title") || "VO2 Max"} fullscreen>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
       <ScrollView contentContainerStyle={styles.scroll}>
         <Text style={styles.title}>{t("vo2Test.title", { defaultValue: "Test VO₂ max" })}</Text>
 
@@ -227,6 +229,7 @@ export default function Vo2TestScreen({ navigation }) {
         </Text>
       </ScrollView>
     </SafeAreaView>
+    </ProGate>
   );
 }
 

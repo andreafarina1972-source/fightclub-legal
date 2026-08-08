@@ -58,7 +58,7 @@ export default function RootNavigator() {
       <Tab.Screen name="Training" component={TrainingScreen} options={{ title: t("tabs.training") }} />
       <Tab.Screen name="Running" component={RunningScreen} options={{ title: t("tabs.running") }} />
       <Tab.Screen name="History" component={HistoryScreen} options={{ title: t("tabs.history") }} />
-      <Tab.Screen name="AiCoach" component={AiCoachScreen} options={{ title: "AI Coach" }} />
+      <Tab.Screen name="AiCoach" component={AiCoachScreen} options={{ title: t("tabs.aiCoach") }} />
       <Tab.Screen name="Settings" component={SettingsScreen} options={{ title: t("tabs.settings") }} />
     </Tab.Navigator>
   );

@@ -7,6 +7,14 @@
 import React, { useEffect, useRef } from "react";
 import { View, Text, StyleSheet, Animated } from "react-native";
 import { scoreColor } from "../services/fightScore";
+import { t } from "../i18n";
+
+// Mappa l'etichetta stabile restituita da scoreLabel() (fightScore.js) alla chiave i18n del livello
+const LEVEL_KEY_MAP = { "ELITE": "elite", "FIGHTER": "fighter", "ACTIVE": "active", "WARM UP": "warmup", "IDLE": "idle" };
+function tLevel(label) {
+  const k = LEVEL_KEY_MAP[label];
+  return k ? (t(`fightScore.level.${k}`) || label) : label;
+}
 
 // ─────────────────────────────────────────────────────────
 // Barra singola componente
@@ -135,10 +143,10 @@ export default function FightScoreBadge({ scoreData, phase }) {
     <View style={[styles.card, !isActive && styles.cardDim]}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerLabel}>FIGHT SCORE</Text>
+        <Text style={styles.headerLabel}>{t("fightScore.title") || "FIGHT SCORE"}</Text>
         {isActive && (
           <View style={[styles.liveDot]}>
-            <Text style={styles.liveDotText}>LIVE</Text>
+            <Text style={styles.liveDotText}>{t("fightScore.live") || "LIVE"}</Text>
           </View>
         )}
       </View>
@@ -152,10 +160,10 @@ export default function FightScoreBadge({ scoreData, phase }) {
 
         <View style={styles.scoreRight}>
           <Text style={[styles.label, { color: isActive ? color : "#444" }]}>
-            {isActive ? (label ?? "IDLE") : "REST"}
+            {isActive ? tLevel(label ?? "IDLE") : (t("fightScore.rest") || "REST")}
           </Text>
           {ppm > 0 && isActive && (
-            <Text style={styles.ppm}>{ppm} colpi/min</Text>
+            <Text style={styles.ppm}>{`${ppm} ${t("fightScore.ppmUnit") || "colpi/min"}`}</Text>
           )}
         </View>
       </View>
@@ -163,19 +171,19 @@ export default function FightScoreBadge({ scoreData, phase }) {
       {/* Barre componenti */}
       <View style={styles.bars}>
         <ComponentBar
-          label="HR zone"
+          label={t("fightScore.compHrZone") || "HR zone"}
           value={hrScore ?? 0}
           max={40}
           color={isActive ? "#FF4D6D" : "#2a2a2a"}
         />
         <ComponentBar
-          label="Cadenza"
+          label={t("fightScore.compCadence") || "Cadenza"}
           value={paceScore ?? 0}
           max={40}
           color={isActive ? "#FF9500" : "#2a2a2a"}
         />
         <ComponentBar
-          label="Costanza"
+          label={t("fightScore.compConstancy") || "Costanza"}
           value={constancyScore ?? 0}
           max={20}
           color={isActive ? "#37E293" : "#2a2a2a"}
@@ -186,8 +194,8 @@ export default function FightScoreBadge({ scoreData, phase }) {
       {!isActive && (
         <Text style={styles.restHint}>
           {String(phase || "").toLowerCase() === "rest"
-            ? "In pausa — riprenderà al prossimo round"
-            : "Avvia il round per vedere il Fight Score"}
+            ? (t("fightScore.restHintPaused") || "In pausa — riprenderà al prossimo round")
+            : (t("fightScore.restHintStart") || "Avvia il round per vedere il Fight Score")}
         </Text>
       )}
     </View>

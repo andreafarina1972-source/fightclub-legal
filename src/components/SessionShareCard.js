@@ -2,12 +2,16 @@
 //
 // Componente React Native che genera una share card grafica per una sessione,
 // in stile "fight poster" UFC: scheda ufficiale con placca punteggio,
-// tale-of-the-tape delle statistiche e sfondo personalizzabile (foto o GIF).
+// tale-of-the-tape delle statistiche e sfondo personalizzabile (foto, GIF o video).
 //
 // Viene catturata con react-native-view-shot e condivisa via expo-sharing.
 // NB: se lo sfondo è una GIF, nell'anteprima a schermo si anima normalmente,
-// ma la card condivisa/esportata sarà sempre un PNG statico (singolo frame),
-// perché la cattura di view-shot produce un'istantanea.
+// ma la card condivisa/esportata con "Condividi"/"Esporta PNG trasparente"
+// sarà sempre un PNG statico (singolo frame), perché la cattura di view-shot
+// produce un'istantanea. Se lo sfondo è un VIDEO, l'anteprima mostra solo un
+// placeholder (niente decodifica/ExoPlayer qui: manda l'app in OOM su device
+// reali, vedi commento più sotto) — la vera composizione animata (mp4) passa
+// dal modulo nativo social-video-export, invocato da useSocialCardExport.
 //
 // Uso:
 //   <SessionShareCard ref={cardRef} session={session} backgroundUri={bgUri} />
@@ -18,6 +22,7 @@
 import React, { forwardRef } from "react";
 import { View, Text, Image, StyleSheet } from "react-native";
 import { scoreColor, scoreLabel } from "../services/fightScore";
+import { isVideoUri } from "../services/mediaKind";
 
 // ─────────────────────────────────────────────────────────
 // HELPERS
@@ -288,7 +293,29 @@ const SessionShareCard = forwardRef(function SessionShareCard({ session, backgro
       {/* SFONDO: in modalità trasparente NON si disegna nulla (canale alpha vuoto) */}
       {!transparent &&
         (backgroundUri ? (
-          <Image source={{ uri: backgroundUri }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+          isVideoUri(backgroundUri) ? (
+            // ⚠️ Niente <Video>/ExoPlayer qui: verificato su device reale che
+            // decodificare in anteprima un video utente (spesso pesante,
+            // 1080p+) mentre Skia/mappe/audio sono già attivi manda l'app in
+            // OutOfMemoryError (heap di default, niente largeHeap). L'export
+            // vero passa dal modulo nativo (MediaMetadataRetriever, frame
+            // singoli, non uno stream ExoPlayer) e non tocca questo
+            // componente — qui basta un placeholder leggero.
+            <View style={[StyleSheet.absoluteFillObject, cardSt.fallbackBg]}>
+              <View style={cardSt.diagonalBandA} />
+              <View style={cardSt.diagonalBandB} />
+              {/* Badge in un angolo fisso, non al centro: al centro finiva quasi
+                  sempre coperto dal pannello "tale of the tape" (che ha un suo
+                  sfondo semi-opaco) e risultava illeggibile. Qui è garantito
+                  visibile qualunque sia il contenuto della card. */}
+              <View style={cardSt.videoPlaceholderBadge}>
+                <Text style={cardSt.videoPlaceholderIcon}>🎬</Text>
+                <Text style={cardSt.videoPlaceholderText}>Sfondo video</Text>
+              </View>
+            </View>
+          ) : (
+            <Image source={{ uri: backgroundUri }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+          )
         ) : (
           <View style={[StyleSheet.absoluteFillObject, cardSt.fallbackBg]}>
             <View style={cardSt.diagonalBandA} />
@@ -421,6 +448,36 @@ const cardSt = StyleSheet.create({
 
   // Fallback (nessuno sfondo utente): nero + bande diagonali rosse in stile poster
   fallbackBg: { backgroundColor: "#0A0A0F" },
+  // Placeholder per sfondo video: niente decodifica in anteprima (vedi commento
+  // in testa al file). Badge in un angolo fisso (vedi commento sopra), sempre
+  // sopra qualunque altro contenuto della card, non al centro.
+  videoPlaceholderBadge: {
+    // ✅ bottom, non top: in alto a destra si sovrapponeva al testo "FIGHTCLUB"
+    // del ribbon (stessa zona). Appena sopra la footerBand rossa (sempre
+    // presente, sempre nella stessa posizione relativa al fondo della card)
+    // è l'unico punto libero indipendentemente da quali blocchi mostra la
+    // card (placca punteggio, zone, tale-of-the-tape variano per sessione).
+    position: "absolute",
+    bottom: 50,
+    right: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 99,
+    backgroundColor: "rgba(8,8,14,0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(212,175,55,0.7)",
+  },
+  videoPlaceholderIcon: { fontSize: 14 },
+  videoPlaceholderText: {
+    color: "#D4AF37",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
   diagonalBandA: {
     position: "absolute",
     width: "180%",

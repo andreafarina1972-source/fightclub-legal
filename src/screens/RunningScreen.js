@@ -1,6 +1,7 @@
 // src/screens/RunningScreen.js
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, StyleSheet, SafeAreaView, Pressable, ScrollView, Alert } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView, Alert } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import * as Location from "expo-location";
 import { WebView } from "react-native-webview";
@@ -176,6 +177,12 @@ function speakOnce(text) {
   catch (e) { console.log("⚠️ speak error:", e?.message); }
 }
 
+// Oltre questa precisione orizzontale (metri) il fix GPS viene scartato:
+// da fermi (specie in interni) il GPS può "derivare" di alcuni metri tra un
+// fix e l'altro anche senza movimento reale; senza filtro quella deriva viene
+// letta come spostamento e sommata alla distanza.
+const GPS_MAX_ACCURACY_M = 20;
+
 function haversineMeters(a, b) {
   if (!a || !b) return 0;
   const toRad = (x) => (x * Math.PI) / 180;
@@ -279,21 +286,21 @@ function PolarMetricsBadge({ elapsed, distanceM, speedNow, speedAvg, hr, hrMin, 
       {/* Riga 1 — Pace */}
       <View style={polarStyles.row}>
         <PolarBadge
-          label="Andatura"
+          label={t("runningScreen.pace") || "Andatura"}
           value={paceNowStr}
           unit="min/km"
           accent
         />
         <PolarBadge
-          label="Pace media"
+          label={t("runningScreen.avgPace") || "Pace media"}
           value={paceAvgStr}
           unit="min/km"
         />
         <PolarBadge
-          label="Best km"
+          label={t("runningScreen.bestKm") || "Best km"}
           value={bestPaceStr}
           unit="min/km"
-          sub="migliore"
+          sub={t("runningScreen.best") || "migliore"}
         />
       </View>
 
@@ -303,18 +310,18 @@ function PolarMetricsBadge({ elapsed, distanceM, speedNow, speedAvg, hr, hrMin, 
       {/* Riga 2 — Frequenza cardiaca */}
       <View style={polarStyles.row}>
         <PolarBadge
-          label="Freq. cardiaca"
+          label={t("runningScreen.hr") || "Freq. cardiaca"}
           value={hrStr}
           unit="bpm"
           accent={hr != null}
         />
         <PolarBadge
-          label="HR min"
+          label={t("runningScreen.hrMin") || "HR min"}
           value={hrMinStr}
           unit="bpm"
         />
         <PolarBadge
-          label="HR max"
+          label={t("runningScreen.hrMax") || "HR max"}
           value={hrMaxStr}
           unit="bpm"
         />
@@ -464,8 +471,8 @@ export default function RunningScreen() {
     if (best != null) setBestKmPace(best);
   }, [distanceM, running]);
 
-  const metZones = useMemo(() => zonesMeta(zonesLive, hrMaxRef.current || hrMax || 0), [zonesLive, hrMax]);
-  const trainZones = useMemo(() => trainingZonesMeta(zonesLive, hrMaxRef.current || hrMax || 0), [zonesLive, hrMax]);
+  const metZones = useMemo(() => zonesMeta(zonesLive.metabolic), [zonesLive]);
+  const trainZones = useMemo(() => trainingZonesMeta(zonesLive.training), [zonesLive]);
 
   const formatTime = (sec) => {
     const m = Math.floor(sec / 60), s = sec % 60;
@@ -509,6 +516,7 @@ export default function RunningScreen() {
       const sub = await Location.watchPositionAsync({ accuracy: Location.Accuracy.High, timeInterval: 2000, distanceInterval: 3, mayShowUserSettingsDialog: true }, (pos) => {
         const c = pos?.coords;
         if (!c) return;
+        if (Number.isFinite(c.accuracy) && c.accuracy > GPS_MAX_ACCURACY_M) return;
         const p = { lat: c.latitude, lon: c.longitude, latitude: c.latitude, longitude: c.longitude, t: Date.now(), speed: Number.isFinite(c.speed) ? c.speed : null };
         lastPointRef.current = p;
         setGpsStatus("ok");
@@ -530,6 +538,7 @@ export default function RunningScreen() {
       (pos) => {
         const c = pos?.coords;
         if (!c) return;
+        if (Number.isFinite(c.accuracy) && c.accuracy > GPS_MAX_ACCURACY_M) return;
         const lat = c.latitude, lon = c.longitude;
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
         const sp = Number.isFinite(c.speed) ? Math.max(0, c.speed) : null;
@@ -605,7 +614,7 @@ export default function RunningScreen() {
     catch { setHrStatus("disconnected"); }
     try { await startLocationWatch(); }
     catch (e) { console.log("❌ GPS start error:", e?.message); Alert.alert(t("runningScreen.gps"), t("runningScreen.locationPermissionBody")); }
-    speakOnce("Inizio corsa");
+    speakOnce(t("runningScreen.voiceStart") || "Inizio corsa");
     setRunning(true);
   }, [running, resetSession, startLocationWatch]);
 
@@ -621,7 +630,7 @@ export default function RunningScreen() {
     const speedAvgFinal = elapsed > 0 ? distanceM / elapsed : 0;
     const avgPaceSecPerKm = distanceM > 10 ? elapsed / (distanceM / 1000) : null;
 
-    Alert.alert("Running", "Vuoi salvare la sessione nello storico?", [
+    Alert.alert("Running", t("timerScreen.interruptedBody") || "Vuoi salvare la sessione nello storico?", [
       { text: t("common.no") || "No", style: "destructive" },
       {
         text: t("common.yes") || "Sì",
@@ -654,8 +663,9 @@ export default function RunningScreen() {
             routePoints: routeRef.current,
             zones: {
               hrMax: hrMaxRef.current || hrMax || null,
-              metabolic: zonesMeta(zonesRef.current, hrMaxRef.current || hrMax || 0),
-              training: trainingZonesMeta(zonesRef.current, hrMaxRef.current || hrMax || 0),
+              elapsed: zonesRef.current.elapsed,
+              metabolic: { ...zonesRef.current.metabolic },
+              training: { ...zonesRef.current.training },
             },
           });
         },
@@ -693,7 +703,7 @@ export default function RunningScreen() {
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>{t("runningScreen.title")}</Text>
-        <Text style={styles.subTitle}>Coach vocale: tempo • distanza • zona HR • pace</Text>
+        <Text style={styles.subTitle}>{t("runningScreen.voiceCoachSubtitle") || "Coach vocale: tempo • distanza • zona HR • pace"}</Text>
 
         <View style={styles.gaugeWrap}>
           <SpeedGauge valueKmh={Number.isFinite(speedNowKmh) ? speedNowKmh : NaN} />

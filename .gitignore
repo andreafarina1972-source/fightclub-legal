@@ -17,6 +17,7 @@ expo-env.d.ts
 *.p12
 *.key
 *.mobileprovision
+release-signing.properties
 
 # Metro
 .metro-health-check*
@@ -41,3 +42,11 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# build artifacts (binari, centinaia di MB: non vanno in git, si rigenerano)
+*.apk
+*.aab
+
+# build Gradle dei moduli Expo locali (rigenerata a ogni prebuild, come /android)
+modules/*/android/build/
+modules/*/android/.cxx/

@@ -1,10 +1,11 @@
 // src/screens/WorkoutBuilderScreen.js
 import React, { useMemo, useState } from "react";
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ScrollView } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import GarminHeader from "../components/GarminHeader";
 
 import { t } from "../i18n";
-import { upsertWorkout } from "./workoutsStorage";
+import { useWorkouts } from "../context/WorkoutContext";
 
 const toInt = (v, def) => {
   const n = Number(String(v).replace(",", "."));
@@ -13,6 +14,7 @@ const toInt = (v, def) => {
 };
 
 export default function WorkoutBuilderScreen({ navigation, route }) {
+  const { upsertWorkout } = useWorkouts();
   const editing = route?.params?.workout || null;
 
   const initial = useMemo(() => {
@@ -38,9 +40,11 @@ export default function WorkoutBuilderScreen({ navigation, route }) {
   const [cycleRest, setCycleRest] = useState(initial.cycleRest);
 
   const save = async () => {
+    const now = new Date().toISOString();
     const w = {
-      id: initial.id,
-      createdAt: initial.createdAt,
+      id: initial.id || Date.now().toString(),
+      createdAt: initial.createdAt || now,
+      updatedAt: now,
       name: (name || "").trim() || t("workoutScreen.defaultWorkoutName", { defaultValue: "Workout" }),
       prep: Math.max(0, toInt(prep, 10)),
       round: Math.max(10, toInt(round, 180)),
@@ -50,7 +54,7 @@ export default function WorkoutBuilderScreen({ navigation, route }) {
       cycleRest: Math.max(0, toInt(cycleRest, 120)),
     };
 
-    await upsertWorkout(w);
+    upsertWorkout(w);
     Alert.alert(
       t("workoutBuilder.savedTitle", { defaultValue: "Salvato" }),
       t("workoutBuilder.savedBody", { defaultValue: "Workout salvato correttamente." })
@@ -59,7 +63,7 @@ export default function WorkoutBuilderScreen({ navigation, route }) {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: "#000" }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#000" }} edges={["top", "left", "right", "bottom"]}>
       <GarminHeader
         title={t("workoutBuilder.title", { defaultValue: "Crea workout" })}
         subtitle={t("workoutBuilder.subtitle", { defaultValue: "Salva round, cicli e riposi" })}
@@ -91,7 +95,7 @@ export default function WorkoutBuilderScreen({ navigation, route }) {
           <Text style={styles.saveText}>{t("common.save", { defaultValue: "SALVA" })}</Text>
         </TouchableOpacity>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 

@@ -5,17 +5,25 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, SafeAreaView, ScrollView,
+  View, Text, StyleSheet, ScrollView,
   Pressable, Alert, ActivityIndicator, Switch,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useHistoryData } from "../context/HistoryContext";
 import { computeTrainingLoad, sessionTSS } from "../services/trainingLoad";
 import { computeStats } from "../services/badgeEngine";
 import {
   generateAiPlan, loadAiPlan, saveCheckIn, loadCheckIns,
   isPlanCurrentWeek, getTodaySession, formatWorkoutParams,
+  translateDayLabel, translateEnergySystemLabel,
 } from "../services/aiCoach";
 import { getAppLang } from "../services/voiceCoach";
+import {
+  loadAthleteProfile, computeReadiness, computePeriodization, weeklyInternalLoad,
+  translatePeriodizationPhase, translateWeightCategory,
+} from "../services/athleteProfile";
+import ProGate from "../components/ProGate";
+import { t } from "../i18n";
 
 // ─────────────────────────────────────────────────────────
 // HELPERS
@@ -73,21 +81,26 @@ function estimateVo2Trend(vo2Measurements) {
 // ─────────────────────────────────────────────────────────
 // CARD SESSIONE
 // ─────────────────────────────────────────────────────────
-function SessionCard({ session, isToday }) {
+function SessionCard({ session, isToday, onPress }) {
   const color = sessionTypeColor(session.type);
   const isRest = session.type === "rest" || session.type === "recovery";
+  const hasDetail = (Array.isArray(session.exercises) && session.exercises.length > 0) ||
+                    (Array.isArray(session.drills) && session.drills.length > 0);
 
   return (
-    <View style={[scStyles.card, isToday && scStyles.cardToday, { borderColor: color + "33" }]}>
+    <Pressable
+      onPress={hasDetail ? onPress : undefined}
+      style={[scStyles.card, isToday && scStyles.cardToday, { borderColor: color + "33" }]}
+    >
       {isToday && (
         <View style={[scStyles.todayBadge, { backgroundColor: color + "22", borderColor: color + "55" }]}>
-          <Text style={[scStyles.todayText, { color }]}>OGGI</Text>
+          <Text style={[scStyles.todayText, { color }]}>{t("aiCoach.today") || "OGGI"}</Text>
         </View>
       )}
       <View style={scStyles.header}>
         <Text style={scStyles.icon}>{sessionTypeIcon(session.type)}</Text>
         <View style={{ flex: 1 }}>
-          <Text style={scStyles.day}>{session.day}</Text>
+          <Text style={scStyles.day}>{translateDayLabel(session.day)}</Text>
           <Text style={[scStyles.name, { color }]}>{session.name}</Text>
         </View>
         {session.tssEstimate > 0 && (
@@ -97,27 +110,63 @@ function SessionCard({ session, isToday }) {
         )}
       </View>
 
-      {!isRest && session.workout && (
-        <Text style={scStyles.workout}>{formatWorkoutParams(session.workout)}</Text>
-      )}
+      {!isRest && session.workout && formatWorkoutParams({ ...session.workout, durationMin: session.durationMin }, session.type) ? (
+        <Text style={scStyles.workout}>{formatWorkoutParams({ ...session.workout, durationMin: session.durationMin }, session.type)}</Text>
+      ) : null}
 
-      <Text style={scStyles.objective}>{session.objective}</Text>
-
-      {session.intensityTarget && (
-        <View style={scStyles.intensityRow}>
-          <Text style={scStyles.intensityLabel}>Target</Text>
-          <Text style={[scStyles.intensityValue, { color }]}>{session.intensityTarget}</Text>
+      {session.energySystem ? (
+        <View style={[scStyles.energyPill, { borderColor: color + "44" }]}>
+          <Text style={[scStyles.energyText, { color }]}>{"\u26A1 " + translateEnergySystemLabel(session.energySystem)}</Text>
         </View>
-      )}
+      ) : null}
+
+      <Text style={scStyles.objective}>
+        {session.physiologicalObjective || session.objective}
+      </Text>
+
+      {Array.isArray(session.drills) && session.drills.length > 0 ? (
+        <View style={scStyles.drillsBox}>
+          {session.drills.map((d, i) => (
+            <Text key={i} style={scStyles.drillItem}>{"\u2022 " + d}</Text>
+          ))}
+        </View>
+      ) : null}
+
+      {(session.intensityTarget || session.rpeTarget != null) ? (
+        <View style={scStyles.intensityRow}>
+          {session.intensityTarget ? (
+            <>
+              <Text style={scStyles.intensityLabel}>{t("aiCoach.target") || "Target"}</Text>
+              <Text style={[scStyles.intensityValue, { color }]}>{session.intensityTarget}</Text>
+            </>
+          ) : null}
+          {session.rpeTarget != null ? (
+            <View style={scStyles.rpeBadge}>
+              <Text style={scStyles.rpeText}>{"RPE " + session.rpeTarget}</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
 
       {session.coachNote && (
         <Text style={scStyles.note}>💬 {session.coachNote}</Text>
       )}
-    </View>
+
+      {hasDetail && (
+        <Text style={scStyles.detailHint}>{(t("aiCoach.viewCard") || "Vedi scheda completa")} ›</Text>
+      )}
+    </Pressable>
   );
 }
 
 const scStyles = StyleSheet.create({
+  energyPill: { alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1, marginTop: 2 },
+  energyText: { fontSize: 11, fontWeight: "800" },
+  drillsBox: { gap: 3, marginTop: 2, paddingLeft: 2 },
+  drillItem: { color: "rgba(255,255,255,0.6)", fontSize: 12, lineHeight: 17 },
+  rpeBadge: { marginLeft: "auto", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: "rgba(255,149,0,0.12)" },
+  rpeText: { color: "#FF9500", fontSize: 11, fontWeight: "800" },
+  detailHint: { color: "#37E293", fontSize: 12, fontWeight: "700", marginTop: 4, alignSelf: "flex-end" },
   card: { backgroundColor: "#0D0D14", borderRadius: 14, borderWidth: 1, padding: 16, gap: 8 },
   cardToday: { backgroundColor: "#0F101C" },
   todayBadge: { alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 99, borderWidth: 1, marginBottom: 4 },
@@ -163,16 +212,16 @@ function CheckInWidget({ onDone }) {
 
   return (
     <View style={ciStyles.card}>
-      <Text style={ciStyles.title}>Check-in rapido</Text>
-      <Text style={ciStyles.sub}>Come stai oggi? (30 secondi)</Text>
+      <Text style={ciStyles.title}>{t("aiCoach.checkinTitle") || "Check-in rapido"}</Text>
+      <Text style={ciStyles.sub}>{t("aiCoach.checkinSubtitle") || "Come stai oggi? (30 secondi)"}</Text>
 
-      <ScoreRow label="😴 Fatica" value={fatigue} onChange={setFatigue} />
-      <ScoreRow label="🌙 Sonno" value={sleep}   onChange={setSleep} />
+      <ScoreRow label={t("aiCoach.fatigue") || "😴 Fatica"} value={fatigue} onChange={setFatigue} />
+      <ScoreRow label={t("aiCoach.sleep") || "🌙 Sonno"} value={sleep}   onChange={setSleep} />
 
       <View style={ciStyles.row}>
-        <Text style={ciStyles.label}>💪 Dolori</Text>
+        <Text style={ciStyles.label}>{t("aiCoach.soreness") || "💪 Dolori"}</Text>
         <View style={ciStyles.pills}>
-          {[["none","Nessuno"],["mild","Lievi"],["severe","Intensi"]].map(([k,l]) => (
+          {[["none", t("aiCoach.sorenessNone") || "Nessuno"],["mild", t("aiCoach.sorenessMild") || "Lievi"],["severe", t("aiCoach.sorenessSevere") || "Intensi"]].map(([k,l]) => (
             <Pressable key={k} onPress={() => setSoreness(k)}
               style={[ciStyles.pill, soreness === k && ciStyles.pillActive]}>
               <Text style={[ciStyles.pillText, soreness === k && ciStyles.pillTextActive]}>{l}</Text>
@@ -182,7 +231,7 @@ function CheckInWidget({ onDone }) {
       </View>
 
       <Pressable style={ciStyles.btn} onPress={() => onDone({ fatigue, sleep, soreness })}>
-        <Text style={ciStyles.btnText}>Genera piano →</Text>
+        <Text style={ciStyles.btnText}>{t("aiCoach.generatePlanArrow") || "Genera piano →"}</Text>
       </Pressable>
     </View>
   );
@@ -218,10 +267,12 @@ export default function AiCoachScreen({ navigation }) {
   const [progress,   setProgress]   = useState("");
   const [showCheckin, setShowCheckin] = useState(false);
   const [goal,       setGoal]       = useState(null);
+  const [athleteProfile, setAthleteProfile] = useState(null);
 
   // Carica piano salvato all'avvio
   useEffect(() => {
     loadAiPlan().then(p => { if (p) setPlan(p); });
+    loadAthleteProfile().then(setAthleteProfile);
   }, []);
 
   // Calcola dati atleta per il prompt
@@ -253,14 +304,22 @@ export default function AiCoachScreen({ navigation }) {
       currentStreak:   stats.currentStreak,
       lastSessionType: lastSession?.type || "boxing",
       lastSessionDate: lastSession?.date || null,
-      goal,
+      goal:            goal || athleteProfile?.goal || null,
+      profile:         athleteProfile,
+      periodization:   computePeriodization(athleteProfile?.nextMatchDate || null),
+      internalLoad:    weeklyInternalLoad(sessions, 7),
+      lang:            getAppLang(),
     };
-  }, [sessions, vo2Measurements, goal]);
+  }, [sessions, vo2Measurements, goal, athleteProfile]);
 
   const handleCheckInDone = useCallback(async (checkin) => {
     setShowCheckin(false);
     await saveCheckIn(checkin);
-    await doGenerate({ ...athleteData, checkIn: checkin });
+    const readiness = computeReadiness({
+      tsb: athleteData.tsb, hrTrend: athleteData.hrTrend,
+      checkIn: checkin, atl: athleteData.atl,
+    });
+    await doGenerate({ ...athleteData, checkIn: checkin, readiness });
   }, [athleteData]);
 
   const doGenerate = useCallback(async (data) => {
@@ -270,7 +329,7 @@ export default function AiCoachScreen({ navigation }) {
       const newPlan = await generateAiPlan(data, setProgress);
       setPlan(newPlan);
     } catch (e) {
-      Alert.alert("Errore", e?.message || "Impossibile generare il piano. Controlla la connessione.");
+      Alert.alert(t("common.error") || "Errore", e?.message || t("aiCoach.generateError") || "Impossibile generare il piano. Controlla la connessione.");
     } finally {
       setLoading(false);
       setProgress("");
@@ -279,7 +338,7 @@ export default function AiCoachScreen({ navigation }) {
 
   const handleGeneratePress = () => {
     if (sessions.length < 3) {
-      Alert.alert("Dati insufficienti", "Completa almeno 3 sessioni prima di generare un piano AI.");
+      Alert.alert(t("aiCoach.insufficientDataTitle") || "Dati insufficienti", t("aiCoach.insufficient") || "Completa almeno 3 sessioni prima di generare un piano AI.");
       return;
     }
     setShowCheckin(true);
@@ -293,27 +352,28 @@ export default function AiCoachScreen({ navigation }) {
   const totalPlanTSS = plan?.sessions?.reduce((a,s) => a + safeNum(s.tssEstimate), 0) || 0;
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <ProGate title={t("aiCoach.title") || "AI Coach"} fullscreen>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
       <ScrollView contentContainerStyle={styles.scroll}>
 
         {/* HEADER */}
         <View style={styles.headerRow}>
           <View>
-            <Text style={styles.title}>AI Coach</Text>
-            <Text style={styles.sub}>Piano adattivo personalizzato</Text>
+            <Text style={styles.title}>{t("aiCoach.title") || "AI Coach"}</Text>
+            <Text style={styles.sub}>{t("aiCoach.subtitle") || "Piano adattivo personalizzato"}</Text>
           </View>
           <View style={styles.aiBadge}>
-            <Text style={styles.aiBadgeText}>✦ Claude AI</Text>
+            <Text style={styles.aiBadgeText}>{t("aiCoach.badgeAi") || "✦ Claude AI"}</Text>
           </View>
         </View>
 
         {/* STATO ATLETA SINTETICO */}
         <View style={styles.kpiRow}>
           {[
-            { label: "CTL", value: athleteData.ctl.toFixed(0), color: "#37E293" },
-            { label: "TSB", value: athleteData.tsb > 0 ? `+${athleteData.tsb.toFixed(0)}` : athleteData.tsb.toFixed(0), color: athleteData.tsb > 0 ? "#37E293" : athleteData.tsb > -15 ? "#FF9500" : "#FF4D6D" },
-            { label: "VO2", value: athleteData.vo2max ? athleteData.vo2max.toFixed(0) : "--", color: "#2D9CDB" },
-            { label: "Streak", value: `${athleteData.currentStreak}gg`, color: "#FF9500" },
+            { label: t("aiCoach.kpiCtl") || "CTL", value: athleteData.ctl.toFixed(0), color: "#37E293" },
+            { label: t("aiCoach.kpiTsb") || "TSB", value: athleteData.tsb > 0 ? `+${athleteData.tsb.toFixed(0)}` : athleteData.tsb.toFixed(0), color: athleteData.tsb > 0 ? "#37E293" : athleteData.tsb > -15 ? "#FF9500" : "#FF4D6D" },
+            { label: t("aiCoach.kpiVo2") || "VO2", value: athleteData.vo2max ? athleteData.vo2max.toFixed(0) : "--", color: "#2D9CDB" },
+            { label: t("aiCoach.kpiStreak") || "Streak", value: `${athleteData.currentStreak}${t("aiCoach.daysSuffix") || "gg"}`, color: "#FF9500" },
           ].map(k => (
             <View key={k.label} style={styles.kpiCard}>
               <Text style={[styles.kpiValue, { color: k.color }]}>{k.value}</Text>
@@ -321,6 +381,27 @@ export default function AiCoachScreen({ navigation }) {
             </View>
           ))}
         </View>
+
+        {/* PROFILO + PERIODIZZAZIONE */}
+        <Pressable
+          style={styles.profileBanner}
+          onPress={() => navigation.navigate("AthleteProfile")}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={styles.profileBannerLabel}>
+              {(athleteData.periodization?.phase && translatePeriodizationPhase(athleteData.periodization.phase))
+                || t("aiCoach.profileDefault") || "Profilo atleta"}
+            </Text>
+            <Text style={styles.profileBannerSub}>
+              {athleteData.periodization?.weeksToMatch != null
+                ? (t("aiCoach.weeksToMatch", { weeks: athleteData.periodization.weeksToMatch }) || `${athleteData.periodization.weeksToMatch} sett. al match · tocca per modificare`)
+                : (athleteProfile?.weightCategory
+                    ? (t("aiCoach.tapToEdit", { category: translateWeightCategory(athleteProfile.weightCategory) }) || `${translateWeightCategory(athleteProfile.weightCategory)} · tocca per modificare`)
+                    : (t("aiCoach.setupProfile") || "Imposta categoria, esperienza, data match →"))}
+            </Text>
+          </View>
+          <Text style={styles.profileBannerArrow}>›</Text>
+        </Pressable>
 
         {/* CHECK-IN / GENERAZIONE */}
         {!loading && showCheckin && (
@@ -331,8 +412,8 @@ export default function AiCoachScreen({ navigation }) {
         {loading && (
           <View style={styles.loaderCard}>
             <ActivityIndicator size="large" color="#37E293" />
-            <Text style={styles.loaderText}>{progress || "Generando il piano..."}</Text>
-            <Text style={styles.loaderSub}>Claude sta analizzando i tuoi dati fisiologici</Text>
+            <Text style={styles.loaderText}>{progress || t("aiCoach.generating") || "Generando il piano..."}</Text>
+            <Text style={styles.loaderSub}>{t("aiCoach.analyzing") || "Claude sta analizzando i tuoi dati fisiologici"}</Text>
           </View>
         )}
 
@@ -345,17 +426,17 @@ export default function AiCoachScreen({ navigation }) {
                 <Text style={styles.planFocus}>{plan.weekFocus}</Text>
                 {!planIsCurrent && (
                   <View style={styles.oldPlanBadge}>
-                    <Text style={styles.oldPlanText}>Piano della settimana scorsa</Text>
+                    <Text style={styles.oldPlanText}>{t("aiCoach.oldPlan") || "Piano della settimana scorsa"}</Text>
                   </View>
                 )}
               </View>
               <View style={styles.planTSS}>
                 <Text style={styles.planTSSValue}>{totalPlanTSS}</Text>
-                <Text style={styles.planTSSLabel}>TSS piano</Text>
+                <Text style={styles.planTSSLabel}>{t("aiCoach.planTssLabel") || "TSS piano"}</Text>
               </View>
             </View>
 
-            {/* Ragionamento coach */}
+            {/* Ragionamento coach (contenuto generato dall'AI, non tradotto) */}
             <View style={styles.rationaleCard}>
               <Text style={styles.rationaleIcon}>🧠</Text>
               <Text style={styles.rationaleText}>{plan.weekRationale}</Text>
@@ -368,6 +449,7 @@ export default function AiCoachScreen({ navigation }) {
                   key={i}
                   session={s}
                   isToday={todaySession === s && planIsCurrent}
+                  onPress={() => navigation.navigate("SessionDetail", { session: s })}
                 />
               ))}
             </View>
@@ -375,7 +457,7 @@ export default function AiCoachScreen({ navigation }) {
             {/* Consiglio settimanale */}
             {plan.weeklyAdvice && (
               <View style={styles.adviceCard}>
-                <Text style={styles.adviceTitle}>💡 Consiglio della settimana</Text>
+                <Text style={styles.adviceTitle}>{t("aiCoach.weeklyAdviceTitle") || "💡 Consiglio della settimana"}</Text>
                 <Text style={styles.adviceText}>{plan.weeklyAdvice}</Text>
               </View>
             )}
@@ -384,8 +466,8 @@ export default function AiCoachScreen({ navigation }) {
             {plan.alertIfTSB != null && athleteData.tsb < plan.alertIfTSB && (
               <View style={styles.alertCard}>
                 <Text style={styles.alertText}>
-                  ⚠️ TSB attuale ({athleteData.tsb.toFixed(0)}) è sotto la soglia raccomandata ({plan.alertIfTSB}).
-                  Considera di posticipare la sessione intensa di 1-2 giorni.
+                  {t("aiCoach.tsbAlert", { tsb: athleteData.tsb.toFixed(0), threshold: plan.alertIfTSB })
+                    || `⚠️ TSB attuale (${athleteData.tsb.toFixed(0)}) è sotto la soglia raccomandata (${plan.alertIfTSB}). Considera di posticipare la sessione intensa di 1-2 giorni.`}
                 </Text>
               </View>
             )}
@@ -396,16 +478,19 @@ export default function AiCoachScreen({ navigation }) {
                 style={styles.startBtn}
                 onPress={() => {
                   const nav = navigation.getParent?.() || navigation;
-                  nav.navigate("TimerRun", { workout: todaySession.workout });
+                  nav.navigate("TimerRun", {
+                    workout: { ...todaySession.workout, name: todaySession.name },
+                    autoStart: true,
+                  });
                 }}
               >
-                <Text style={styles.startBtnText}>▶  Avvia sessione di oggi</Text>
+                <Text style={styles.startBtnText}>{t("aiCoach.startTodaySession") || "▶  Avvia sessione di oggi"}</Text>
               </Pressable>
             )}
 
             {/* Genera nuovo piano */}
             <Pressable style={styles.regenBtn} onPress={handleGeneratePress}>
-              <Text style={styles.regenBtnText}>↻  Rigenera piano</Text>
+              <Text style={styles.regenBtnText}>{t("aiCoach.regeneratePlan") || "↻  Rigenera piano"}</Text>
             </Pressable>
           </>
         )}
@@ -414,28 +499,28 @@ export default function AiCoachScreen({ navigation }) {
         {!loading && !showCheckin && !plan && (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyIcon}>🤖</Text>
-            <Text style={styles.emptyTitle}>Il tuo coach personale</Text>
+            <Text style={styles.emptyTitle}>{t("aiCoach.emptyTitle") || "Il tuo coach personale"}</Text>
             <Text style={styles.emptyText}>
-              L'AI analizza il tuo CTL/ATL/TSB, VO2max, Fight Score e risposta HR
-              per generare un piano settimanale adattato esattamente al tuo stato di forma.
+              {t("aiCoach.emptyText") || "L'AI analizza il tuo CTL/ATL/TSB, VO2max, Fight Score e risposta HR per generare un piano settimanale adattato esattamente al tuo stato di forma."}
             </Text>
             {sessions.length < 3 && (
               <Text style={styles.emptyHint}>
-                Completa almeno 3 sessioni per sbloccare il coach AI.
-                ({sessions.length}/3 effettuate)
+                {t("aiCoach.emptyHint", { n: sessions.length })
+                  || `Completa almeno 3 sessioni per sbloccare il coach AI.\n(${sessions.length}/3 effettuate)`}
               </Text>
             )}
             <Pressable
               style={[styles.startBtn, sessions.length < 3 && { opacity: 0.4 }]}
               onPress={handleGeneratePress}
             >
-              <Text style={styles.startBtnText}>✦  Genera il mio piano</Text>
+              <Text style={styles.startBtnText}>{t("aiCoach.generateMyPlan") || "✦  Genera il mio piano"}</Text>
             </Pressable>
           </View>
         )}
 
       </ScrollView>
     </SafeAreaView>
+    </ProGate>
   );
 }
 
@@ -451,6 +536,10 @@ const styles = StyleSheet.create({
   sub:   { color: "rgba(255,255,255,0.4)", fontSize: 14, fontWeight: "600", marginTop: -4 },
   aiBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 99, backgroundColor: "rgba(55,226,147,0.1)", borderWidth: 1, borderColor: "rgba(55,226,147,0.3)" },
   aiBadgeText: { color: "#37E293", fontSize: 11, fontWeight: "800" },
+  profileBanner: { flexDirection: "row", alignItems: "center", backgroundColor: "#0D0D14", borderRadius: 14, borderWidth: 1, borderColor: "rgba(45,156,219,0.25)", padding: 14, gap: 10 },
+  profileBannerLabel: { color: "#2D9CDB", fontSize: 14, fontWeight: "800" },
+  profileBannerSub: { color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 2 },
+  profileBannerArrow: { color: "rgba(255,255,255,0.3)", fontSize: 24, fontWeight: "300" },
 
   kpiRow: { flexDirection: "row", gap: 8 },
   kpiCard: { flex: 1, backgroundColor: "#0D0D14", borderRadius: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.06)", padding: 12, alignItems: "center", gap: 2 },

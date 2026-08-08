@@ -1,6 +1,7 @@
 // src/screens/TrainingScreen.js
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, StyleSheet, SafeAreaView, Pressable, ScrollView, Alert } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView, Alert } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 
 import { t } from "../i18n";
@@ -200,8 +201,8 @@ export default function TrainingScreen() {
       ? t("home.hrScanningDot")
       : t("home.hrOffDot");
 
-  const metZones = useMemo(() => zonesMeta(zonesLive, hrMax), [zonesLive, hrMax]);
-  const trainZones = useMemo(() => trainingZonesMeta(zonesLive, hrMax), [zonesLive, hrMax]);
+  const metZones = useMemo(() => zonesMeta(zonesLive.metabolic), [zonesLive]);
+  const trainZones = useMemo(() => trainingZonesMeta(zonesLive.training), [zonesLive]);
 
   const formatTime = (sec) => {
     const m = Math.floor(sec / 60);
@@ -274,8 +275,9 @@ export default function TrainingScreen() {
               elapsed: zonesRef.current.elapsed,
               zones: {
                 hrMax: hrMaxRef.current || hrMax || null,
-                metabolic: zonesMeta(zonesRef.current, hrMaxRef.current || hrMax || 0),
-                training: trainingZonesMeta(zonesRef.current, hrMaxRef.current || hrMax || 0),
+                elapsed: zonesRef.current.elapsed,
+                metabolic: { ...zonesRef.current.metabolic },
+                training: { ...zonesRef.current.training },
               },
               calories,
               createdAt: new Date().toISOString(),
@@ -289,7 +291,7 @@ export default function TrainingScreen() {
   const hrBadgeValue = hr == null ? "--" : String(hr);
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <ScrollView contentContainerStyle={styles.container}>
         <View style={styles.headerRow}>
           <View>

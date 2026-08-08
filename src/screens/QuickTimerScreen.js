@@ -18,6 +18,7 @@ import GarminHeader from "../components/GarminHeader";
 import { speakRoundStart } from "../services/voiceCoach";
 import { calcFightScore } from "../services/fightScore";
 import FightScoreBadge from "../components/FightScoreBadge";
+import ProGate from "../components/ProGate";
 
 // ✅ SOLO gong: inizio/fine round (niente Count1)
 import { playGong, loadSounds } from "../services/soundManager";
@@ -77,6 +78,11 @@ export default function QuickTimerScreen() {
   // 🥊 Colpi
   const [roundPunches, setRoundPunches] = useState(0);
   const [totalPunches, setTotalPunches] = useState(0);
+  // ✅ FIX: traccia i colpi per round (mancava del tutto — "Colpi/round" nello storico
+  // veniva calcolato dividendo il totale per 1, gonfiando enormemente lo score).
+  // Ref (non state) per evitare closure stale nel setInterval di runTimer.
+  const roundPunchesRef = useRef(0);
+  const punchesByRoundRef = useRef([]);
 
   // 🔥 Intensità → colpi/minuto (CPM)
   const [liveIntensity, setLiveIntensity] = useState(0);
@@ -231,6 +237,7 @@ export default function QuickTimerScreen() {
 
     setRoundPunches((p) => p + 1);
     setTotalPunches((tp) => tp + 1);
+    roundPunchesRef.current += 1;
   }, []);
 
   // Punch detector: avvia in work. Nota: se passi da work→work (rest=0) l’effetto su "phase" non scatta,
@@ -290,6 +297,12 @@ export default function QuickTimerScreen() {
   };
 
   const nextRound = async (round) => {
+    // ✅ salva i colpi del round appena concluso PRIMA di decidere se continuare o
+    // terminare, così anche l'ultimo round finisce nell'array (via ref: sempre
+    // aggiornato, a differenza dello state "roundPunches" che qui sarebbe stale).
+    punchesByRoundRef.current = [...punchesByRoundRef.current, roundPunchesRef.current];
+    roundPunchesRef.current = 0;
+
     const next = round + 1;
 
     if (next > rounds) {
@@ -321,6 +334,8 @@ export default function QuickTimerScreen() {
     setCurrentRound(1);
     setRoundPunches(0);
     setTotalPunches(0);
+    roundPunchesRef.current = 0;
+    punchesByRoundRef.current = [];
     punchWindow.current = [];
     setLiveIntensity(0);
 
@@ -358,6 +373,8 @@ export default function QuickTimerScreen() {
       totalMinutes: Math.round(totalSeconds / 60),
       avgHr: null,
       punches: totalPunches,
+      punchesByRound: punchesByRoundRef.current,
+      rounds,
       calories,
       fightScorePeak: fightScore?.total ?? null,
       hrZones: {
@@ -373,8 +390,17 @@ export default function QuickTimerScreen() {
   const stop = () => {
     if (phase === "ready") return;
 
+    // ✅ include il round in corso (fase "work") o appena concluso (fase "rest",
+    // non ancora spostato nell'array da nextRound finché il riposo non termina)
+    const pendingRoundPunches = roundPunchesRef.current;
+    const punchesByRoundSnapshot =
+      pendingRoundPunches > 0
+        ? [...punchesByRoundRef.current, pendingRoundPunches]
+        : [...punchesByRoundRef.current];
+
     const snapshot = {
       punches: totalPunches,
+      punchesByRound: punchesByRoundSnapshot,
       elapsed: zonesRef.current.elapsed,
       zones: {
         hrMax: hrMaxRef.current,
@@ -395,6 +421,8 @@ export default function QuickTimerScreen() {
     setCurrentRound(1);
     setRoundPunches(0);
     setTotalPunches(0);
+    roundPunchesRef.current = 0;
+    punchesByRoundRef.current = [];
     punchWindow.current = [];
     setLiveIntensity(0);
 
@@ -410,11 +438,13 @@ export default function QuickTimerScreen() {
             id: Date.now().toString(),
             date: new Date().toISOString(),
             workoutId: null,
-            workoutName: t("quickTimer.saveInterrupted", { label: snapshot.label, rounds: snapshot.rounds }),
+            workoutName: t("quickTimer.workoutName", { label: snapshot.label, rounds: snapshot.rounds }),
             totalSeconds,
             totalMinutes: Math.round(totalSeconds / 60),
             avgHr: null,
             punches: snapshot.punches,
+            punchesByRound: snapshot.punchesByRound,
+            rounds: snapshot.rounds,
             calories,
             interrupted: true,
             hrZones: {
@@ -576,13 +606,16 @@ export default function QuickTimerScreen() {
           </Text>
         </View>
 
-
-
-        {/* FIGHT SCORE BADGE */}
-        <FightScoreBadge scoreData={fightScore} phase={phase === "work" ? "round" : phase} />
-
         <Text style={styles.punchCount}>{t("quickTimer.punchesRound", { n: roundPunches })}</Text>
         <Text style={styles.intensityLabel}>{t("quickTimer.intensity", { n: liveIntensity })}</Text>
+
+        {/* FIGHT SCORE BADGE */}
+        <ProGate
+          title={t("fightScore.title") || "Fight Score"}
+          teaser={<FightScoreBadge scoreData={fightScore} phase={phase === "work" ? "round" : phase} />}
+        >
+          <FightScoreBadge scoreData={fightScore} phase={phase === "work" ? "round" : phase} />
+        </ProGate>
 
         {zonesLive.elapsed > 5 && (
           <View style={{ width: "100%" }}>

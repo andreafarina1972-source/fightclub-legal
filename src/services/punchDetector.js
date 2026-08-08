@@ -1,6 +1,8 @@
 // src/services/punchDetector.js
 import { Audio } from "expo-av";
+import { Alert } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { t } from "../i18n";
 
 let recording = null;
 let interval = null;
@@ -29,16 +31,20 @@ function parseSensitivityTo01(raw) {
 export async function startPunchDetection(onPunch) {
   if (running || stopping) return () => {};
 
+  // ✅ impostato subito, prima di qualunque await: chiude la finestra di race
+  // in cui due chiamate concorrenti (es. effetto che si rifà per un riferimento
+  // che cambia) superano entrambe il guard qui sopra e avviano due registrazioni.
+  running = true;
+
   // 🥊 rispetta il toggle "conta colpi" delle Settings
   try {
     const enabled = await AsyncStorage.getItem("punchCounterEnabled");
     if (enabled === "false") {
       console.log("🥊 Conta colpi disattivata dalle impostazioni");
+      running = false;
       return () => {}; // no-op: ritorna stop fittizio
     }
   } catch {}
-
-  running = true;
 
   // token sessione
   sessionId += 1;
@@ -48,6 +54,10 @@ export async function startPunchDetection(onPunch) {
     const permission = await Audio.requestPermissionsAsync();
     if (!permission.granted) {
       console.log("❌ Permessi microfono negati");
+      Alert.alert(
+        t("punchDetector.micDeniedTitle"),
+        t("punchDetector.micDeniedBody")
+      );
       running = false;
       return () => {};
     }
@@ -122,7 +132,13 @@ export async function startPunchDetection(onPunch) {
     const deltaTriggerDb = (19.5 - sensitivityEff * 5.0) * 0.90; // ✅ +10% sensibilità (soglia più bassa)
     const deltaReleaseDb = 3.5;
     const absMinDb = (-30 - sensitivityEff * 7) * 0.90; // ✅ +10% sensibilità (minimo assoluto meno severo)
-    const forceRearmAfterMs = 90; // evita blocchi su segnale sostenuto
+    // ✅ 90ms era troppo corto: la coda sonora di un colpo forte (impatto + eco)
+    // spesso resta sopra soglia oltre quel tempo, causando doppio conteggio quando
+    // il riarmo forzato scattava mentre il colpo precedente stava ancora decadendo.
+    // Il riarmo "naturale" (rientro sotto deltaReleaseDb) resta il percorso primario
+    // e più veloce per colpi normali/raffiche; questo è solo la rete di sicurezza
+    // per segnali sostenuti che non rientrano mai sotto soglia.
+    const forceRearmAfterMs = 220;
 
     let inLoop = false;
 
@@ -215,11 +231,11 @@ if (hasCalib) {
             const thresholdDb = noiseCalDb + ratio * (peakCalDb - noiseCalDb);
             triggered = dbClamped >= thresholdDb;
           }
+        }
 
-        // Se siamo in speech mode, NON contare (override totale) — vale anche dopo la calibrazione
+        // Se siamo in speech mode, NON contare (override totale) — vale sia calibrato che non calibrato
         if (now < speechModeUntil) {
           triggered = false;
-        }
         }
 
         if (
@@ -244,6 +260,10 @@ if (hasCalib) {
     return () => stopPunchDetection(mySession);
   } catch (err) {
     console.log("❌ Errore avvio punch detector:", err);
+    Alert.alert(
+      t("punchDetector.startFailedTitle"),
+      t("punchDetector.startFailedBody", { error: err?.message || "?" })
+    );
     running = false;
     return () => {};
   }

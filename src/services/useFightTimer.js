@@ -1,5 +1,5 @@
 // src/services/useFightTimer.js
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { Vibration } from "react-native";
 import { playBeep, playCount1, playGong } from "./soundManager";
 
@@ -33,11 +33,13 @@ export default function useFightTimer(config) {
   const [punchesByRound, setPunchesByRound] = useState([]);
   const roundPunchesRef = useRef(0);
 
-  const addPunch = () => {
+  // ✅ memoizzato: cambia riferimento solo ai cambi di fase, non a ogni tick del timer
+  // (altrimenti l'effetto che avvia/ferma il rilevatore colpi in TimerScreen si riavvia ogni secondo)
+  const addPunch = useCallback(() => {
     if (phase !== "round") return;
     setPunchCount((p) => p + 1);
     roundPunchesRef.current += 1;
-  };
+  }, [phase]);
 
   const intervalRef = useRef(null);
 

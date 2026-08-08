@@ -50,9 +50,10 @@ export function useShareBackground() {
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions
-          ? ImagePicker.MediaTypeOptions.Images
-          : ["images"],
+        // Immagini (incluse gif) + video: lo sfondo animato viene poi
+        // instradato al percorso di export video nativo, vedi
+        // src/services/mediaKind.js e useSocialCardExport.
+        mediaTypes: ["images", "videos"],
         quality: 1,
         allowsEditing: false,
       });

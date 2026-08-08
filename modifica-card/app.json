@@ -1,0 +1,70 @@
+{
+  "expo": {
+    "name": "FightClub",
+    "slug": "fightclub",
+    "owner": "andrea1972",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": true,
+          "modes": ["central"],
+          "bluetoothAlwaysPermission": "Consentire a FightClub di connettersi ai dispositivi Bluetooth"
+        }
+      ],
+      "./ant-plus-plugin",
+      "expo-localization",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "FightClub accede alle tue foto per impostare lo sfondo della fight card da condividere."
+        }
+      ]
+    ],
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Questo app utilizza la posizione per tracciare i tuoi allenamenti.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Per tracciare gli allenamenti in background."
+      }
+    },
+    "android": {
+      "package": "com.andrea1972.fightclub",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "RECORD_AUDIO",
+        "FOREGROUND_SERVICE_LOCATION",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "c6d35bc1-af45-4c17-92ab-8ada13665752"
+      }
+    }
+  }
+}

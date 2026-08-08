@@ -1,6 +1,7 @@
 // src/screens/RunningReplayRouteScreen.js
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, StyleSheet, SafeAreaView, Pressable } from "react-native";
+import { View, Text, StyleSheet, Pressable } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import { t } from "../i18n";
 import { useHistoryData } from "../context/HistoryContext";

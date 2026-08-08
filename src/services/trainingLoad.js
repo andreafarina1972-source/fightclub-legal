@@ -183,7 +183,7 @@ export function computeTrainingLoad(sessions, days = 90) {
  */
 export function tsbStatus(tsb) {
   const v = Number(tsb);
-  if (!Number.isFinite(v)) return { key: "unknown", color: "#555" };
+  if (!Number.isFinite(v)) return { key: "unknown", color: "#555", label: "N/D" };
   if (v > 10)   return { key: "peak",     color: "#37E293", label: "Forma ottimale" };
   if (v >= 0)   return { key: "fresh",    color: "#2D9CDB", label: "Fresco" };
   if (v >= -10) return { key: "load",     color: "#FF9500", label: "Carico normale" };

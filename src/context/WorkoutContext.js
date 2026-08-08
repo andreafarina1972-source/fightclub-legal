@@ -36,12 +36,26 @@ export function WorkoutProvider({ children }) {
     setWorkouts((prev) => prev.filter((w) => w.id !== id));
   };
 
+  // Crea o aggiorna (usato dal Workout Builder per salvare/modificare)
+  const upsertWorkout = (workout) => {
+    setWorkouts((prev) => {
+      const idx = prev.findIndex((w) => w.id === workout.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = workout;
+        return next;
+      }
+      return [...prev, workout];
+    });
+  };
+
   return (
     <WorkoutContext.Provider
       value={{
         workouts,
         addWorkout,
         removeWorkout,
+        upsertWorkout,
         loadWorkouts,
       }}
     >

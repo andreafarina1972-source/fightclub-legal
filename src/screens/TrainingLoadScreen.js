@@ -4,13 +4,14 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   Pressable,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useHistoryData } from "../context/HistoryContext";
 import { computeTrainingLoad, tsbStatus } from "../services/trainingLoad";
 import { t } from "../i18n";
+import ProGate from "../components/ProGate";
 
 // ─────────────────────────────────────────────────────────
 // MINI GRAFICO SVG (victory-native non serve — SVG inline)
@@ -130,19 +131,19 @@ const kpiStyles = StyleSheet.create({
 function StatusBanner({ tsb }) {
   const { label, color, key } = tsbStatus(tsb);
   const advice = {
-    peak:      "Sei in forma ottimale. Ideale per gara o sparring intenso.",
-    fresh:     "Sei fresco. Puoi aumentare il carico questa settimana.",
-    load:      "Carico normale. Mantieni il ritmo e monitora il recupero.",
-    fatigue:   "Affaticamento medio. Inserisci una sessione di recupero attivo.",
-    overreach: "Sovrallenamento. Riduci il carico per almeno 3-4 giorni.",
-    unknown:   "Dati insufficienti. Aggiungi sessioni per calcolare la forma.",
+    peak:      t("trainingLoad.advice.peak")      || "Sei in forma ottimale. Ideale per gara o sparring intenso.",
+    fresh:     t("trainingLoad.advice.fresh")     || "Sei fresco. Puoi aumentare il carico questa settimana.",
+    load:      t("trainingLoad.advice.load")      || "Carico normale. Mantieni il ritmo e monitora il recupero.",
+    fatigue:   t("trainingLoad.advice.fatigue")   || "Affaticamento medio. Inserisci una sessione di recupero attivo.",
+    overreach: t("trainingLoad.advice.overreach") || "Sovrallenamento. Riduci il carico per almeno 3-4 giorni.",
+    unknown:   t("trainingLoad.advice.unknown")   || "Dati insufficienti. Aggiungi sessioni per calcolare la forma.",
   };
 
   return (
     <View style={[bannerStyles.card, { borderColor: color + "44" }]}>
       <View style={bannerStyles.header}>
         <View style={[bannerStyles.dot, { backgroundColor: color }]} />
-        <Text style={[bannerStyles.label, { color }]}>{label}</Text>
+        <Text style={[bannerStyles.label, { color }]}>{t(`trainingLoad.status.${key}`) || label}</Text>
       </View>
       <Text style={bannerStyles.advice}>{advice[key] || advice.unknown}</Text>
     </View>
@@ -168,9 +169,9 @@ const bannerStyles = StyleSheet.create({
 // ─────────────────────────────────────────────────────────
 function ChartLegend() {
   const items = [
-    { color: "#37E293", label: "CTL — Fitness (42gg)" },
-    { color: "#FF4D6D", label: "ATL — Fatica (7gg)" },
-    { color: "#2D9CDB", label: "TSB — Forma (CTL - ATL)" },
+    { color: "#37E293", label: t("trainingLoad.legend.ctl") || "CTL — Fitness (42gg)" },
+    { color: "#FF4D6D", label: t("trainingLoad.legend.atl") || "ATL — Fatica (7gg)" },
+    { color: "#2D9CDB", label: t("trainingLoad.legend.tsb") || "TSB — Forma (CTL - ATL)" },
   ];
   return (
     <View style={legendStyles.row}>
@@ -194,16 +195,16 @@ const legendStyles = StyleSheet.create({
 // ─────────────────────────────────────────────────────────
 // SCHERMATA PRINCIPALE
 // ─────────────────────────────────────────────────────────
-const WINDOWS = [
-  { label: "4 sett.", days: 28 },
-  { label: "3 mesi", days: 90 },
-  { label: "6 mesi", days: 180 },
-];
-
 export default function TrainingLoadScreen() {
   const { sessions } = useHistoryData();
   const [windowIdx, setWindowIdx] = useState(1); // default 90gg
   const [chartWidth, setChartWidth] = useState(340);
+
+  const WINDOWS = [
+    { label: t("trainingLoad.win4w") || "4 sett.", days: 28 },
+    { label: t("trainingLoad.win3m") || "3 mesi", days: 90 },
+    { label: t("trainingLoad.win6m") || "6 mesi", days: 180 },
+  ];
 
   const { series, current, weeklyTSS, lastTSS } = useMemo(
     () => computeTrainingLoad(sessions, WINDOWS[windowIdx].days),
@@ -218,12 +219,13 @@ export default function TrainingLoadScreen() {
   const tsbStatus_ = tsbStatus(tsbVal);
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <ProGate title={t("trainingLoad.title") || "Training Load"} fullscreen>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
       <ScrollView contentContainerStyle={styles.scroll}>
 
         {/* HEADER */}
-        <Text style={styles.title}>Training Load</Text>
-        <Text style={styles.sub}>Fitness · Fatica · Forma</Text>
+        <Text style={styles.title}>{t("trainingLoad.title") || "Training Load"}</Text>
+        <Text style={styles.sub}>{t("trainingLoad.subtitle") || "Fitness · Fatica · Forma"}</Text>
 
         {/* SELEZIONE FINESTRA */}
         <View style={styles.windowRow}>
@@ -246,38 +248,38 @@ export default function TrainingLoadScreen() {
         {/* KPI PRINCIPALI */}
         <View style={styles.kpiRow}>
           <KpiCard
-            label="CTL — Fitness"
+            label={t("trainingLoad.ctlLabel") || "CTL — Fitness"}
             value={ctlRound}
             color="#37E293"
-            sub="Media 42 giorni"
+            sub={t("trainingLoad.ctlSub") || "Media 42 giorni"}
           />
           <KpiCard
-            label="ATL — Fatica"
+            label={t("trainingLoad.atlLabel") || "ATL — Fatica"}
             value={atlRound}
             color="#FF4D6D"
-            sub="Media 7 giorni"
+            sub={t("trainingLoad.atlSub") || "Media 7 giorni"}
           />
           <KpiCard
-            label="TSB — Forma"
+            label={t("trainingLoad.tsbLabel") || "TSB — Forma"}
             value={tsbRound > 0 ? `+${tsbRound}` : tsbRound}
             color={tsbStatus_.color}
-            sub={tsbStatus_.label}
+            sub={t(`trainingLoad.status.${tsbStatus_.key}`) || tsbStatus_.label}
           />
         </View>
 
         {/* KPI SECONDARI */}
         <View style={styles.kpiRow}>
           <KpiCard
-            label="TSS settimana"
+            label={t("trainingLoad.weeklyTss") || "TSS settimana"}
             value={weeklyTSS}
             color="#FF9500"
-            sub="Carico 7 giorni"
+            sub={t("trainingLoad.weeklyTssSub") || "Carico 7 giorni"}
           />
           <KpiCard
-            label="Ultimo TSS"
+            label={t("trainingLoad.lastTss") || "Ultimo TSS"}
             value={lastTSS}
             color="rgba(255,255,255,0.7)"
-            sub="Sessione recente"
+            sub={t("trainingLoad.lastTssSub") || "Sessione recente"}
           />
         </View>
 
@@ -286,7 +288,7 @@ export default function TrainingLoadScreen() {
           <ChartLegend />
           {series.length < 2 ? (
             <Text style={styles.empty}>
-              Servono almeno 2 sessioni in date diverse per visualizzare il grafico.
+              {t("trainingLoad.chartEmpty") || "Servono almeno 2 sessioni in date diverse per visualizzare il grafico."}
             </Text>
           ) : (
             <TrainingChart series={series} width={chartWidth} />
@@ -295,11 +297,11 @@ export default function TrainingLoadScreen() {
 
         {/* GUIDA INTERPRETAZIONE */}
         <View style={styles.guideCard}>
-          <Text style={styles.guideTitle}>Come leggere i valori</Text>
+          <Text style={styles.guideTitle}>{t("trainingLoad.guideTitle") || "Come leggere i valori"}</Text>
           {[
-            { color: "#37E293", label: "CTL (Fitness)",  desc: "Sale lentamente con settimane di allenamento costante. Obiettivo: crescita progressiva." },
-            { color: "#FF4D6D", label: "ATL (Fatica)",   desc: "Reagisce rapidamente al carico. Alta dopo sessioni intense, scende in 1-2 giorni di riposo." },
-            { color: "#2D9CDB", label: "TSB (Forma)",    desc: "Positivo = sei fresco. Negativo = sei affaticato. Ideale per gara: TSB tra +5 e +15." },
+            { color: "#37E293", label: t("trainingLoad.guideCtlLabel") || "CTL (Fitness)",  desc: t("trainingLoad.guideCtlDesc") || "Sale lentamente con settimane di allenamento costante. Obiettivo: crescita progressiva." },
+            { color: "#FF4D6D", label: t("trainingLoad.guideAtlLabel") || "ATL (Fatica)",   desc: t("trainingLoad.guideAtlDesc") || "Reagisce rapidamente al carico. Alta dopo sessioni intense, scende in 1-2 giorni di riposo." },
+            { color: "#2D9CDB", label: t("trainingLoad.guideTsbLabel") || "TSB (Forma)",    desc: t("trainingLoad.guideTsbDesc") || "Positivo = sei fresco. Negativo = sei affaticato. Ideale per gara: TSB tra +5 e +15." },
           ].map((g) => (
             <View key={g.label} style={styles.guideRow}>
               <View style={[styles.guideDot, { backgroundColor: g.color }]} />
@@ -312,13 +314,13 @@ export default function TrainingLoadScreen() {
 
           <View style={styles.guideDivider} />
           <Text style={styles.guideNote}>
-            Il TSS di ogni sessione combina: durata, intensità HR, volume colpi e Fight Score.
-            Una sessione di 45 min in zona 4 con 200 colpi vale circa 65-75 TSS.
+            {t("trainingLoad.guideNote") || "Il TSS di ogni sessione combina: durata, intensità HR, volume colpi e Fight Score. Una sessione di 45 min in zona 4 con 200 colpi vale circa 65-75 TSS."}
           </Text>
         </View>
 
       </ScrollView>
     </SafeAreaView>
+    </ProGate>
   );
 }
 

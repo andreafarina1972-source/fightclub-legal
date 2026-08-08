@@ -6,13 +6,14 @@ import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import GlassCard from "../components/ui/GlassCard";
+import AdBanner from "../components/AdBanner";
 import { connectHeartRate, subscribeHeartRate } from "../services/heartRateService";
 
 // ✅ storico (sessions + vo2)
 import { useHistoryData } from "../context/HistoryContext";
 
 // ✅ VO2
-import { estimateVo2Max } from "../services/vo2Utils";
+import { estimateVo2Max, getVo2TestMinHr } from "../services/vo2Utils";
 // FIX #11: legge età reale dalle Settings invece di usare 35 hardcoded
 import { getAthleteAge } from "../services/hrZones";
 
@@ -126,7 +127,7 @@ export default function HomeScreen({ navigation }) {
     if (kcal != null) parts.push(`${kcal} kcal`);
 
     const base = parts.length ? parts.join(" • ") : "--";
-    return lastSession?.interrupted ? `${base} • interrotto` : base;
+    return lastSession?.interrupted ? `${base} • ${t("home.interruptedSuffix") || "interrotto"}` : base;
   }, [lastSession]);
 
   const lastWorkoutDateText = useMemo(() => {
@@ -154,7 +155,7 @@ export default function HomeScreen({ navigation }) {
 
       const valid = samples.filter((x) => Number.isFinite(x) && x >= 60 && x <= 240);
       if (valid.length < 10) {
-        Alert.alert("VO₂ max", "Dati HR insufficienti. Verifica la fascia cardio e riprova.");
+        Alert.alert("VO₂ max", t("home.vo2InsufficientData") || "Dati HR insufficienti. Verifica la fascia cardio e riprova.");
         return;
       }
 
@@ -163,7 +164,11 @@ export default function HomeScreen({ navigation }) {
       const age = athleteAge; // FIX #11: usa età dalle Settings (non più 35 hardcoded)
       const vo2 = estimateVo2Max(avgHr, age, athleteHrRest); // formula Uth con HRrest
       if (!vo2) {
-        Alert.alert("VO₂ max", "Impossibile stimare VO₂ max con questi dati.");
+        const target = getVo2TestMinHr(age);
+        Alert.alert(
+          "VO₂ max",
+          t("home.vo2FailBody", { target }) || `Frequenza cardiaca troppo bassa durante il test (serve almeno l'85% della FC massima, circa ${target} bpm). Fai uno sforzo più intenso per tutti i 30 secondi e riprova.`
+        );
         return;
       }
 
@@ -179,22 +184,16 @@ export default function HomeScreen({ navigation }) {
         );
       }
 
-      Alert.alert("VO₂ max salvato", `Stima: ${vo2} ml/kg/min (HR media: ${avgHr} bpm)`);
+      Alert.alert(
+        t("home.vo2SavedTitle") || "VO₂ max salvato",
+        t("home.vo2SavedBody", { vo2, avgHr }) || `Stima: ${vo2} ml/kg/min (HR media: ${avgHr} bpm)`
+      );
     },
-    [addVo2Measurement]
+    [addVo2Measurement, athleteAge, athleteHrRest]
   );
 
-  const startVo2Measure = useCallback(() => {
-    if (vo2Measuring) return;
-
-    if (hrStatus !== "connected") {
-      Alert.alert(
-        "VO₂ max",
-        "Collega prima la fascia cardio (Bluetooth) e attendi i bpm nella Home, poi riprova."
-      );
-      return;
-    }
-
+  // Avvia davvero il conto alla rovescia e il campionamento HR (dopo la conferma delle istruzioni)
+  const beginVo2Timer = useCallback(() => {
     const durationSec = 30;
 
     vo2SamplesRef.current = [];
@@ -221,7 +220,32 @@ export default function HomeScreen({ navigation }) {
         return next;
       });
     }, 1000);
-  }, [vo2Measuring, hrStatus, hr, stopVo2Measure]);
+  }, [hr, stopVo2Measure]);
+
+  const startVo2Measure = useCallback(() => {
+    if (vo2Measuring) return;
+
+    if (hrStatus !== "connected") {
+      Alert.alert(
+        "VO₂ max",
+        t("home.vo2NeedStrap") || "Collega prima la fascia cardio (Bluetooth) e attendi i bpm nella Home, poi riprova."
+      );
+      return;
+    }
+
+    // ✅ FIX: la stima richiede scientificamente una FC ≥85% della FC massima (vedi
+    // guardia in vo2Utils.js), quindi va richiesto chiaramente uno sforzo quasi
+    // massimale — altrimenti il test fallisce sempre.
+    const target = getVo2TestMinHr(athleteAge);
+    Alert.alert(
+      t("home.vo2InstructionsTitle") || "Test VO₂ max",
+      t("home.vo2InstructionsBody", { target }) || `Fai uno sforzo il più intenso possibile per tutti i 30 secondi (sprint, salti esplosivi, corsa veloce sul posto): la frequenza cardiaca deve superare circa ${target} bpm (85% della FC massima stimata) per una stima scientificamente valida.`,
+      [
+        { text: t("common.cancel") || "Annulla", style: "cancel" },
+        { text: t("home.vo2InstructionsGo") || "Via!", onPress: beginVo2Timer },
+      ]
+    );
+  }, [vo2Measuring, hrStatus, beginVo2Timer, athleteAge]);
 
   useEffect(() => {
     return () => {
@@ -290,7 +314,7 @@ export default function HomeScreen({ navigation }) {
       <View style={[styles.root, { paddingTop: 8 }]}>
         <View style={styles.header}>
           <View>
-            <Text style={styles.title}>FIGTHCLUB</Text>
+            <Text style={styles.title}>FIGHTCLUB</Text>
             <Text style={styles.subtitle}>{t("home.subtitle")}</Text>
           </View>
 
@@ -311,13 +335,13 @@ export default function HomeScreen({ navigation }) {
             <GlassCard style={[styles.mainTimerCard, { borderColor: "rgba(55,226,147,0.2)" }]}>
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                 <Text style={styles.sectionLabel}>{t("home.nextWorkout")}</Text>
-                <View style={styles.aiBadge}><Text style={styles.aiBadgeText}>AI Coach</Text></View>
+                <View style={styles.aiBadge}><Text style={styles.aiBadgeText}>{t("home.aiCoach") || "AI Coach"}</Text></View>
               </View>
               <Text style={styles.workoutName}>{aiTodaySession.name}</Text>
               <Text style={styles.aiObjective}>{aiTodaySession.objective}</Text>
               {aiTodaySession.workout && (
                 <View style={styles.aiWorkoutBox}>
-                  <Text style={styles.aiWorkoutText}>{formatWorkoutParams(aiTodaySession.workout)}</Text>
+                  <Text style={styles.aiWorkoutText}>{formatWorkoutParams({ ...aiTodaySession.workout, durationMin: aiTodaySession.durationMin }, aiTodaySession.type)}</Text>
                   {aiTodaySession.intensityTarget && (
                     <Text style={styles.aiIntensity}>{aiTodaySession.intensityTarget}</Text>
                   )}
@@ -331,13 +355,13 @@ export default function HomeScreen({ navigation }) {
               <View style={{ flexDirection: "row", gap: 10 }}>
                 {aiTodaySession.workout && (
                   <Pressable style={[styles.primaryButton, { flex: 1 }]}
-                    onPress={() => { const nav = navigation.getParent?.() || navigation; nav.navigate("TimerRun", { workout: aiTodaySession.workout }); }}>
+                    onPress={() => { const nav = navigation.getParent?.() || navigation; nav.navigate("TimerRun", { workout: { ...aiTodaySession.workout, name: aiTodaySession.name }, autoStart: true }); }}>
                     <Ionicons name="play" size={18} color="#050508" />
-                    <Text style={styles.primaryButtonText}>Avvia ora</Text>
+                    <Text style={styles.primaryButtonText}>{t("aiCoach.startNow") || "Avvia ora"}</Text>
                   </Pressable>
                 )}
                 <Pressable style={styles.aiCoachBtn} onPress={() => navigation.navigate("AiCoach")}>
-                  <Text style={styles.aiCoachBtnText}>Vedi piano</Text>
+                  <Text style={styles.aiCoachBtnText}>{t("home.viewPlan") || "Vedi piano"}</Text>
                 </Pressable>
               </View>
             </GlassCard>
@@ -354,7 +378,7 @@ export default function HomeScreen({ navigation }) {
                 </View>
               </View>
               <Pressable style={styles.primaryButton} onPress={() => navigation.navigate("AiCoach")}>
-                <Text style={styles.primaryButtonText}>Genera piano AI</Text>
+                <Text style={styles.primaryButtonText}>{t("home.generateAiPlan") || "Genera piano AI"}</Text>
               </Pressable>
             </GlassCard>
           )}
@@ -374,7 +398,7 @@ export default function HomeScreen({ navigation }) {
               <Text style={styles.cardValueHighlight}>{latestVo2Label}</Text>
 
               {vo2Measuring ? (
-                <Text style={styles.cardSub}>Misurazione in corso… {vo2SecLeft}s</Text>
+                <Text style={styles.cardSub}>{t("home.vo2Moving", { s: vo2SecLeft }) || `Sforzo massimo! ${vo2SecLeft}s`}</Text>
               ) : (
                 <Text style={styles.cardSub}>
                   {hrStatus === "connected" ? t("home.hrConnected") : t("home.hrConnect")}
@@ -408,8 +432,20 @@ export default function HomeScreen({ navigation }) {
                   else navigation.navigate("CustomTimer");
                 }}
               />
+              <QuickAction
+                icon="pulse-outline"
+                label={t("home.trainingLoad") || "Carico"}
+                onPress={() => { const nav = navigation.getParent?.() || navigation; nav.navigate("TrainingLoad"); }}
+              />
+              <QuickAction
+                icon="trophy-outline"
+                label={t("home.badges") || "Badge"}
+                onPress={() => { const nav = navigation.getParent?.() || navigation; nav.navigate("Badges"); }}
+              />
             </View>
           </GlassCard>
+
+          <AdBanner style={{ marginTop: 16 }} />
         </ScrollView>
       </View>
     </SafeAreaView>
@@ -509,8 +545,8 @@ const styles = StyleSheet.create({
   },
   vo2BtnText: { color: "#050508", fontSize: 12, fontWeight: "900" },
 
-  quickRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 6 },
-  quickAction: { alignItems: "center", flex: 1 },
+  quickRow: { flexDirection: "row", flexWrap: "wrap", rowGap: 14, marginTop: 6 },
+  quickAction: { alignItems: "center", width: "33.333%" },
   quickIcon: {
     width: 44,
     height: 44,
