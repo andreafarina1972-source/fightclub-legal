@@ -23,6 +23,7 @@ import React, { forwardRef } from "react";
 import { View, Text, Image, StyleSheet } from "react-native";
 import { scoreColor, scoreLabel } from "../services/fightScore";
 import { isVideoUri } from "../services/mediaKind";
+import { t } from "../i18n";
 
 // ─────────────────────────────────────────────────────────
 // HELPERS
@@ -310,7 +311,9 @@ const SessionShareCard = forwardRef(function SessionShareCard({ session, backgro
                   visibile qualunque sia il contenuto della card. */}
               <View style={cardSt.videoPlaceholderBadge}>
                 <Text style={cardSt.videoPlaceholderIcon}>🎬</Text>
-                <Text style={cardSt.videoPlaceholderText}>Sfondo video</Text>
+                <Text style={cardSt.videoPlaceholderText}>
+                  {t("historyScreen.socialExport.videoPlaceholderLabel") || "Sfondo video"}
+                </Text>
               </View>
             </View>
           ) : (

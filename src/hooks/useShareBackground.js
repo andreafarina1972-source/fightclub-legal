@@ -12,6 +12,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Alert } from "react-native";
 import { getShareBackground, saveShareBackground, clearShareBackground } from "../services/storage";
+import { t } from "../i18n";
 
 // Lazy require per evitare crash se il modulo nativo non è ancora installato
 // (es. in Expo Go prima del prebuild, o prima di `npx expo install`)
@@ -36,8 +37,9 @@ export function useShareBackground() {
     const ImagePicker = getImagePicker();
     if (!ImagePicker) {
       Alert.alert(
-        "Non disponibile",
-        "expo-image-picker non è installato. Esegui: npx expo install expo-image-picker (richiede un development build)."
+        t("historyScreen.socialExport.unavailableTitle") || "Non disponibile",
+        t("historyScreen.imagePickerUnavailableBody") ||
+          "expo-image-picker non è installato. Esegui: npx expo install expo-image-picker (richiede un development build)."
       );
       return;
     }
@@ -45,7 +47,11 @@ export function useShareBackground() {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (perm.status !== "granted") {
-        Alert.alert("Permesso negato", "Consenti l'accesso alle foto per scegliere uno sfondo.");
+        Alert.alert(
+          t("historyScreen.socialExport.permissionDeniedTitle") || "Permesso negato",
+          t("historyScreen.backgroundPermissionDeniedBody") ||
+            "Consenti l'accesso alle foto per scegliere uno sfondo."
+        );
         return;
       }
 
@@ -67,7 +73,10 @@ export function useShareBackground() {
       await saveShareBackground(uri);
     } catch (e) {
       console.log("❌ Errore selezione sfondo:", e?.message);
-      Alert.alert("Errore", "Impossibile selezionare l'immagine.");
+      Alert.alert(
+        t("historyScreen.socialExport.errorTitle") || "Errore",
+        t("historyScreen.pickBackgroundErrorBody") || "Impossibile selezionare l'immagine."
+      );
     }
   }, []);
 

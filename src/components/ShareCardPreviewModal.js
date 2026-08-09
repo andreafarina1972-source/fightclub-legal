@@ -80,7 +80,9 @@ export default function ShareCardPreviewModal({
 
         <View style={[st.sheet, { paddingBottom: 24 + insets.bottom }]}>
           <View style={st.header}>
-            <Text style={st.title}>Anteprima Fight Card</Text>
+            <Text style={st.title}>
+              {t("historyScreen.shareCardTitle") || "Anteprima Fight Card"}
+            </Text>
             <Pressable onPress={onClose} hitSlop={10}>
               <Text style={st.closeX}>✕</Text>
             </Pressable>
@@ -100,13 +102,17 @@ export default function ShareCardPreviewModal({
             <View style={st.actions}>
               <Pressable style={st.bgBtn} onPress={onPickBackground}>
                 <Text style={st.bgBtnText}>
-                  {backgroundUri ? "Cambia sfondo 🖼️" : "Aggiungi sfondo 🖼️"}
+                  {backgroundUri
+                    ? (t("historyScreen.changeBackground") || "Cambia sfondo 🖼️")
+                    : (t("historyScreen.addBackground") || "Aggiungi sfondo 🖼️")}
                 </Text>
               </Pressable>
 
               {backgroundUri ? (
                 <Pressable style={st.removeBtn} onPress={onRemoveBackground}>
-                  <Text style={st.removeBtnText}>Rimuovi sfondo</Text>
+                  <Text style={st.removeBtnText}>
+                    {t("historyScreen.removeBackground") || "Rimuovi sfondo"}
+                  </Text>
                 </Pressable>
               ) : null}
 
@@ -116,7 +122,9 @@ export default function ShareCardPreviewModal({
                 disabled={sharing}
               >
                 <Text style={st.shareBtnText}>
-                  {sharing ? "Generando..." : "Condividi 📤"}
+                  {sharing
+                    ? (t("historyScreen.sharing") || "Generando...")
+                    : (t("historyScreen.share") || "Condividi 📤")}
                 </Text>
               </Pressable>
 
@@ -126,14 +134,16 @@ export default function ShareCardPreviewModal({
                 disabled={exporting}
               >
                 <Text style={st.exportBtnText}>
-                  {exporting ? "Esporto..." : "🎬 Esporta PNG trasparente"}
+                  {exporting
+                    ? (t("historyScreen.exportingTransparent") || "Esporto...")
+                    : (t("historyScreen.exportTransparentPng") || "🎬 Esporta PNG trasparente")}
                 </Text>
               </Pressable>
             </View>
 
             <Text style={st.exportHint}>
-              Per un video animato: apri il PNG in CapCut, InShot o nelle Storie, mettilo
-              sopra un tuo video ed esporta la clip.
+              {t("historyScreen.exportTransparentHint") ||
+                "Per un video animato: apri il PNG in CapCut, InShot o nelle Storie, mettilo sopra un tuo video ed esporta la clip."}
             </Text>
 
             {/* Export a canvas fisso per Stories/Reels/TikTok/Feed/Quadrato:
