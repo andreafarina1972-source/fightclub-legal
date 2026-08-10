@@ -15,6 +15,9 @@ import { useShareBackground } from "../hooks/useShareBackground";
 import { usePro } from "../context/ProContext";
 import ProGate from "../components/ProGate";
 import AdBanner from "../components/AdBanner";
+import RunningKmSplits from "../components/RunningKmSplits";
+import RunningTimeSeriesChart from "../components/RunningTimeSeriesChart";
+import { getKmSplitsForSession, getTimeSeriesForSession } from "../services/runningSplits";
 
 // ✅ Etichette zone: tradotte + forza a capo per testi lunghi
 // Nota: mantiene compatibilità se hrZones non espone ancora labelKey
@@ -376,7 +379,11 @@ function sessionElapsedSeconds(item) {
 
 function runningAvgSpeedKmh(item) {
   const s = Number(item?.speedAvg);
-  if (Number.isFinite(s) && s > 0) return s;
+  // item.speedAvg è salvato in m/s (distanceM / elapsed, vedi RunningScreen.js) —
+  // va convertito in km/h, come già fatto correttamente per speedMin/speedMax
+  // qualche riga più sotto nel punto di chiamata. Prima mancava la conversione:
+  // la "velocità media" mostrata era ~3.6x più bassa del reale.
+  if (Number.isFinite(s) && s > 0) return s * 3.6;
 
   // fallback: calcola da distanza/tempo
   const distM = safeNumber(item?.distanceM, 0);
@@ -615,6 +622,14 @@ export default function HistoryScreen({ navigation }) {
     const runMaxKmh = fmtKmh(safeNumber(item?.speedMax, 0) * 3.6);
     const runAvgPace = runningAvgPaceStr(item);
     const runBestKmPace = runningBestKmPaceStr(item);
+    const runKmSplits = isRun ? getKmSplitsForSession(item) : [];
+    const runTimeSeries = isRun ? getTimeSeriesForSession(item) : [];
+    const runHrSeries = runTimeSeries
+      .filter((d) => Number.isFinite(d.hr))
+      .map((d) => ({ t: d.t, value: d.hr }));
+    const runPaceSeries = runTimeSeries
+      .filter((d) => Number.isFinite(d.speedKmh))
+      .map((d) => ({ t: d.t, value: d.speedKmh }));
 
     const hrMin = safeNumber(item?.hrMin, NaN);
     const hrMax = safeNumber(item?.hrMax, NaN);
@@ -756,6 +771,46 @@ export default function HistoryScreen({ navigation }) {
                 </View>
               </View>
             </View>
+
+            {/* Split per km + grafici HR/andatura (Pro, come Zone Cardio) */}
+            {(runKmSplits.length > 0 || runHrSeries.length > 1 || runPaceSeries.length > 1) && (
+              <ProGate
+                title={t("historyScreen.kmSplitsTitle") || "Split per km"}
+                teaser={
+                  <View style={styles.polarBadgeCard}>
+                    <RunningKmSplits splits={runKmSplits} />
+                    <RunningTimeSeriesChart
+                      title={t("historyScreen.hrChartTitle") || "Frequenza cardiaca"}
+                      unit="bpm"
+                      color="#FF6363"
+                      series={runHrSeries}
+                    />
+                    <RunningTimeSeriesChart
+                      title={t("historyScreen.paceChartTitle") || "Andatura"}
+                      unit="km/h"
+                      color="#2D9CDB"
+                      series={runPaceSeries}
+                    />
+                  </View>
+                }
+              >
+                <View style={styles.polarBadgeCard}>
+                  <RunningKmSplits splits={runKmSplits} />
+                  <RunningTimeSeriesChart
+                    title={t("historyScreen.hrChartTitle") || "Frequenza cardiaca"}
+                    unit="bpm"
+                    color="#FF6363"
+                    series={runHrSeries}
+                  />
+                  <RunningTimeSeriesChart
+                    title={t("historyScreen.paceChartTitle") || "Andatura"}
+                    unit="km/h"
+                    color="#2D9CDB"
+                    series={runPaceSeries}
+                  />
+                </View>
+              </ProGate>
+            )}
           </>
         ) : (
           <>

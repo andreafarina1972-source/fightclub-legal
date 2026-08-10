@@ -80,6 +80,7 @@ import { estimateCaloriesFromSession } from "../services/vo2Utils";
 import { connectHeartRate, subscribeHeartRate } from "../services/heartRateService";
 import CardioZonesChart from "../components/CardioZonesChart";
 import { getHrMax, zonesMeta, trainingZonesMeta, initZonesAccumulator, accumulateZones } from "../services/hrZones";
+import { computeKmSplits, computeTimeSeries } from "../services/runningSplits";
 
 let Maps = null;
 function getMapsSafe() {
@@ -353,6 +354,7 @@ export default function RunningScreen() {
   // HR
   const [hrStatus, setHrStatus] = useState("disconnected");
   const [hr, setHr] = useState(null);
+  const hrRef = useRef(null); // specchio sempre aggiornato di `hr`, per le closure a deps vuote (es. startLocationWatch)
   const hrMinRef = useRef(null);
   const hrMaxSessionRef = useRef(null);
 
@@ -409,6 +411,7 @@ export default function RunningScreen() {
     setBestKmPace(null);
     routeRef.current = [];
     lastPointRef.current = null;
+    hrRef.current = null;
     hrMinRef.current = null;
     hrMaxSessionRef.current = null;
     zonesRef.current = initZonesAccumulator();
@@ -428,6 +431,7 @@ export default function RunningScreen() {
       const v = Number(bpm);
       if (!Number.isFinite(v) || v <= 0) return;
       const bpmRound = Math.round(v);
+      hrRef.current = bpmRound;
       setHr(bpmRound);
       setHrStatus("connected");
       if (hrMinRef.current == null || bpmRound < hrMinRef.current) hrMinRef.current = bpmRound;
@@ -541,13 +545,28 @@ export default function RunningScreen() {
         if (Number.isFinite(c.accuracy) && c.accuracy > GPS_MAX_ACCURACY_M) return;
         const lat = c.latitude, lon = c.longitude;
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-        const sp = Number.isFinite(c.speed) ? Math.max(0, c.speed) : null;
+        const rawSp = Number.isFinite(c.speed) ? Math.max(0, c.speed) : null;
         const tMs = pos.timestamp ? Number(pos.timestamp) : Date.now();
-        const point = { lat, lon, t: tMs, speed: sp, hr: hr ?? null };
+        // hrRef.current (non lo stato `hr`): questa closure è memoizzata con
+        // deps vuote, quindi `hr` resterebbe congelato al valore del primo
+        // render (sempre null) — bug di stale closure che azzerava l'HR per
+        // ogni punto del percorso, mai emerso finché nessuno usava point.hr.
+        const point = { lat, lon, t: tMs, speed: rawSp, hr: hrRef.current ?? null };
         const last = lastPointRef.current;
+        // La velocità "grezza" del GPS (c.speed, stima Doppler del chip) è spesso
+        // inaffidabile: su molti dispositivi resta a 0 o è molto rumorosa anche
+        // durante il movimento. Calcoliamo quindi la velocità dallo spostamento
+        // reale tra due fix consecutivi (stessa distanza già usata per l'incremento
+        // di distanceM, diviso il tempo trascorso) — coerente con l'approccio già
+        // usato in computeBestKmPace, molto più rappresentativo del movimento
+        // effettivo. Il valore GPS grezzo resta come fallback solo per il
+        // primissimo fix, quando non c'è ancora un punto precedente.
+        let measuredSp = rawSp;
         if (last) {
           const d = haversineMeters(last, point);
           if (d >= 0 && d <= 30) setDistanceM((prev) => prev + d);
+          const dtSec = (tMs - last.t) / 1000;
+          if (d >= 0 && d <= 30 && dtSec > 0.3 && dtSec < 15) measuredSp = d / dtSec;
         }
         lastPointRef.current = point;
         routeRef.current.push(point);
@@ -557,10 +576,10 @@ export default function RunningScreen() {
           if (!didCenterRef.current) didCenterRef.current = true;
         }
         if (routeRef.current.length > 20000) routeRef.current.splice(0, routeRef.current.length - 20000);
-        setSpeedNow(sp);
-        if (sp != null) {
-          setSpeedMin((v) => (v == null ? sp : Math.min(v, sp)));
-          setSpeedMax((v) => (v == null ? sp : Math.max(v, sp)));
+        setSpeedNow(measuredSp);
+        if (measuredSp != null) {
+          setSpeedMin((v) => (v == null ? measuredSp : Math.min(v, measuredSp)));
+          setSpeedMax((v) => (v == null ? measuredSp : Math.max(v, measuredSp)));
         }
         setGpsStatus("ok");
       }
@@ -629,6 +648,9 @@ export default function RunningScreen() {
     const finalBestKm = computeBestKmPace(routeRef.current);
     const speedAvgFinal = elapsed > 0 ? distanceM / elapsed : 0;
     const avgPaceSecPerKm = distanceM > 10 ? elapsed / (distanceM / 1000) : null;
+    // Split per km + serie temporale HR/andatura, per la sezione dedicata nello storico
+    const kmSplits = computeKmSplits(routeRef.current);
+    const timeSeries = computeTimeSeries(routeRef.current);
 
     Alert.alert("Running", t("timerScreen.interruptedBody") || "Vuoi salvare la sessione nello storico?", [
       { text: t("common.no") || "No", style: "destructive" },
@@ -659,6 +681,8 @@ export default function RunningScreen() {
             // ── NUOVI CAMPI PACE ─────────────────────────
             avgPaceSecPerKm,              // pace media in sec/km (es. 300 = 5:00/km)
             bestKmPaceSecPerKm: finalBestKm, // km migliore in sec/km
+            kmSplits,                     // [{ km, splitSec, hrMax }] per ogni km pieno
+            timeSeries,                   // [{ t, hr, speedKmh }] a bucket di 30s
             // ─────────────────────────────────────────────
             routePoints: routeRef.current,
             zones: {
