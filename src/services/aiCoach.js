@@ -139,6 +139,23 @@ export async function loadCheckIns() {
   } catch { return []; }
 }
 
+// Estrae i nomi degli esercizi usati nell'ultimo piano generato (tutte le
+// sedute con un campo exercises[], tipicamente forza/potenza/core/corsa),
+// per permettere al prompt di chiedere varietà rispetto alla settimana
+// precedente invece di riproporre sempre lo stesso sottoinsieme ristretto
+// della libreria.
+function extractPreviousExercises(plan) {
+  if (!plan || !Array.isArray(plan.sessions)) return [];
+  const names = new Set();
+  for (const session of plan.sessions) {
+    if (!Array.isArray(session?.exercises)) continue;
+    for (const ex of session.exercises) {
+      if (ex?.name) names.add(ex.name);
+    }
+  }
+  return Array.from(names);
+}
+
 // ─────────────────────────────────────────────────────────
 // COSTRUTTORE PROMPT
 // ─────────────────────────────────────────────────────────
@@ -155,6 +172,7 @@ function buildPrompt(athleteData) {
     readiness = null,      // B. readiness
     periodization = null,  // C. periodizzazione
     goal = null, checkIn = null, lang = "it",
+    previousExercises = [],
   } = athleteData || {};
 
   const daysSinceLastSession = lastSessionDate
@@ -283,6 +301,10 @@ function buildPrompt(athleteData) {
     + "ESERCIZI DISPONIBILI (scegli SOLO da questa lista, sono esercizi reali con esecuzione corretta. "
     + "I nomi sono in italiano: copiali carattere per carattere in exercises[].name, ANCHE SE il resto del JSON va scritto in un'altra lingua — servono identici per abbinare la scheda tecnica lato app):\n"
     + exerciseMenu + "\n\n"
+    + (previousExercises.length > 0
+        ? "ESERCIZI GIA' USATI LA SETTIMANA SCORSA (evita di riproporli identici: scegli alternative dalla lista ESERCIZI DISPONIBILI per garantire varieta' e progressione, a meno che la periodizzazione richieda esplicitamente di ripetere lo stesso esercizio per progressione di carico):\n"
+          + previousExercises.join(", ") + "\n\n"
+        : "")
     + "Formato JSON richiesto (i valori workout nell esempio sono solo struttura, non volume: usa le REGOLE DI VOLUME per il livello " + volumeLevel + "):\n"
     + "{\n"
     + '  "weekFocus": "obiettivo principale della settimana coerente con la fase",\n'
@@ -317,6 +339,8 @@ function buildPrompt(athleteData) {
     + "- Il campo exercises DEVE contenere una scheda completa di esercizi VERI scelti dalla lista ESERCIZI DISPONIBILI, con serie, ripetizioni (reps) o durata (durationSec), recupero (restSec) e carico. Dosa il volume in base a livello, readiness e fase.\n"
     + "- Per forza/pesi usa sets+reps+load+restSec; per pliometria sets+reps+restSec (recuperi ampi, qualita' non fatica); per core stability usa sets+durationSec (isometrie 20-45s) o sets+reps lente; per core forza sets+reps o durationSec; per corsa usa reps (ripetute) o durationSec (fondo) e restSec.\n"
     + "- Includi SEMPRE esercizi di CORE STABILITY (categoria Core Stability) nelle sedute di forza/potenza: sono la base del trasferimento di potenza nel colpo e della protezione della colonna.\n"
+    + "- Ogni seduta di forza/potenza deve contenere ALMENO 4-6 esercizi, alternando esercizi di FORZA (categoria Forza/Pesi) ed esercizi di PLIOMETRIA/POTENZA ESPLOSIVA (categoria Pliometria), oltre al core stability richiesto sopra: sfrutta l'ampiezza della libreria, non limitarti sempre agli stessi 2-3 esercizi piu' ovvi.\n"
+    + "- VARIETA' settimanale: se e' presente la lista ESERCIZI GIA' USATI LA SETTIMANA SCORSA, preferisci esercizi diversi da quella lista scegliendoli dalla lista ESERCIZI DISPONIBILI, per favorire progressione e stimolo variato nel tempo.\n"
     + "- Il programma DEVE includere corsa, forza/potenza e core/mobilita', non solo boxe (secondo la STRUTTURA SETTIMANALE per il livello).\n"
     + "- Drill/esercizi SEMPRE specifici e concreti (combinazioni, difese, footwork, sparring condizionato, pad work), mai generici.\n"
     + "- Coerenza assoluta con fase di periodizzazione e readiness sopra.\n"
@@ -342,7 +366,12 @@ function providerDisplayName(provider) {
 export async function generateAiPlan(athleteData, onProgress) {
   onProgress?.(t("aiCoach.analyzingData") || "Analizzando i tuoi dati...");
 
-  const { systemPrompt, userPrompt } = buildPrompt(athleteData);
+  // Esercizi del piano corrente (che questa generazione sta per sostituire),
+  // per chiedere all'AI di variare rispetto alla settimana precedente.
+  const previousPlan = await loadAiPlan();
+  const previousExercises = extractPreviousExercises(previousPlan);
+
+  const { systemPrompt, userPrompt } = buildPrompt({ ...athleteData, previousExercises });
 
   // Recupera chiave e provider
   const apiKey = await loadApiKey();
