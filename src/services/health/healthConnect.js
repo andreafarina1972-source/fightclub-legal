@@ -52,18 +52,56 @@ const READ_PERMISSIONS = Object.values(RECORD_TYPES).map((recordType) => ({ acce
 const HISTORY_PERMISSION = { accessType: "read", recordType: "ReadHealthDataHistory" };
 const HISTORY_WINDOW_DAYS_WITHOUT_PERMISSION = 30;
 
-// sdk.getGrantedPermissions() NON include ReadHealthDataHistory nel suo
-// elenco (verificato: dopo aver concesso il permesso storico dal dialogo
-// dedicato, la lista restituita conteneva comunque solo i quattro tipi
-// core) — a differenza di WriteExerciseRoutePermission/
-// BackgroundAccessPermission, che il pacchetto documenta come inclusi.
-// Non c'è quindi un modo per interrogare più tardi lo stato di questo
-// permesso: si tiene traccia del risultato dell'ultima
-// requestHistoryPermission() riuscita in storage locale. Limite noto: se
-// l'utente lo revoca da Impostazioni > Health Connect senza passare
-// dall'app, il flag resta ottimisticamente vero finché non si ritenta una
-// lettura oltre i 30gg (che tornerebbe comunque vuota, mai un errore).
+// Diagnostica QA (12/08/2026), valori grezzi catturati su dispositivo reale:
+//   sdk.requestPermission([HISTORY_PERMISSION]) -> []  (SEMPRE, anche
+//     subito dopo che l'utente ha concesso dal dialogo reale — l'array
+//     riflette solo le decisioni NUOVE di quella specifica interazione;
+//     se il permesso risultava già deciso in precedenza, non c'è nulla
+//     di "nuovo" da riportare e torna vuoto)
+//   sdk.getGrantedPermissions() -> [4 tipi core, MAI ReadHealthDataHistory]
+//     (confermato anche subito dopo una concessione riuscita)
+// Non è quindi un problema di formato/confronto: l'SDK non espone in
+// NESSUN modo lo stato di questo permesso speciale. L'unica via
+// affidabile è verificarlo indirettamente (vedi probeHistoryAccess).
 const HISTORY_GRANTED_KEY = "fightclub_hc_history_permission";
+
+// Verifica indiretta: nessuna API dell'SDK riporta lo stato di
+// ReadHealthDataHistory (vedi sopra), quindi si tenta una lettura reale
+// in una finestra ANTECEDENTE i 30 giorni (oltre i quali Health Connect
+// tronca silenziosamente senza il permesso, mai con un errore — vedi
+// commento sopra su HISTORY_WINDOW_DAYS_WITHOUT_PERMISSION). Se anche
+// un solo tipo restituisce almeno un record in quella finestra, il
+// permesso è realmente attivo.
+//
+// Prova tutti e quattro i tipi in parallelo, non solo uno: al momento
+// della chiamata non è detto quali dei quattro permessi core siano
+// concessi (vedi Scenario permessi parziali), quindi limitarsi a un
+// solo tipo rischierebbe un falso negativo per assenza di QUEL
+// permesso, non per assenza dello storico.
+//
+// Falso negativo noto e accettato: un utente senza alcun dato più
+// vecchio di 30gg (dispositivo nuovo) risulta "storico non attivo"
+// anche a permesso concesso — ma è innocuo, perché il risultato
+// pratico (nessun dato oltre i 30gg) è identico in entrambi i casi.
+// Non esiste invece il caso opposto (falso positivo): un permesso
+// davvero assente non può mai restituire record oltre la finestra.
+const PROBE_WINDOW_DAYS_FROM = 90;
+const PROBE_WINDOW_DAYS_TO = 31; // esclude gli ultimi 30gg: lì l'accesso è comunque garantito, non prova nulla
+async function probeHistoryAccess(sdk) {
+  try {
+    const toDate = new Date(Date.now() - PROBE_WINDOW_DAYS_TO * 86400000);
+    const fromDate = new Date(Date.now() - PROBE_WINDOW_DAYS_FROM * 86400000);
+    const timeRangeFilter = { operator: "between", startTime: fromDate.toISOString(), endTime: toDate.toISOString() };
+    const results = await Promise.all(
+      Object.values(RECORD_TYPES).map((recordType) =>
+        sdk.readRecords(recordType, { timeRangeFilter }).catch(() => ({ records: [] }))
+      )
+    );
+    return results.some((r) => Array.isArray(r?.records) && r.records.length > 0);
+  } catch {
+    return false;
+  }
+}
 
 async function getStoredHistoryGranted() {
   try {
@@ -155,16 +193,25 @@ export async function requestPermissions() {
 
 // Richiede il permesso storico, a parte e solo su azione esplicita
 // dell'utente (mai insieme ai quattro core). Mostra il dialogo dedicato di
-// Health Connect ("Consentire l'accesso ai dati precedenti?"). Il
-// risultato viene anche persistito per essere esposto da
-// getGrantedPermissions() in seguito.
+// Health Connect ("Consentire l'accesso ai dati precedenti?") SOLO se il
+// permesso non è ancora stato deciso — altrimenti l'activity si apre e
+// si richiude da sola, senza interazione (verificato). Il risultato
+// viene anche persistito per essere esposto da getGrantedPermissions()
+// in seguito.
+//
+// Non fidarsi del valore restituito da sdk.requestPermission(): torna
+// SEMPRE [] quando il permesso risultava già deciso in precedenza
+// (diagnostica QA 12/08/2026, valori grezzi catturati su dispositivo
+// reale — vedi commento su HISTORY_GRANTED_KEY), quindi lo si chiama
+// solo per mostrare l'eventuale dialogo, e si verifica l'esito reale
+// con probeHistoryAccess().
 export async function requestHistoryPermission() {
   const sdk = getSdk();
   if (!sdk) return false;
   try {
     if (!(await isAvailable())) return false;
-    const granted = await sdk.requestPermission([HISTORY_PERMISSION]);
-    const isGranted = Array.isArray(granted) && granted.some((p) => (p?.recordType || p) === "ReadHealthDataHistory");
+    await sdk.requestPermission([HISTORY_PERMISSION]);
+    const isGranted = await probeHistoryAccess(sdk);
     await setStoredHistoryGranted(isGranted);
     return isGranted;
   } catch {
