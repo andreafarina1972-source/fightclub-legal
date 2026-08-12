@@ -110,11 +110,96 @@ export function profileCompleteness(profile) {
 //   - TSB (forma da Training Load)
 //   - trend HR (HR piu' alta a parita' di carico = affaticamento)
 //   - check-in soggettivo (fatica, sonno, dolori)
+//   - [opzionale] recovery oggettivo (HRV/FC a riposo/sonno da wearable)
 //
 // Stati (dal documento): Recovery, Fresh, Ready, High Performance,
 //                        Accumulated Fatigue, Overreaching, Risk of Overtraining
 
 function clamp01(x) { return Math.max(0, Math.min(1, x)); }
+function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+
+// ─────────────────────────────────────────────────────────
+// Passo 7 — contributo opzionale del recovery oggettivo (HRV/FC a
+// riposo/sonno da recoveryBaseline.js). ADDITIVO: agisce come un
+// aggiustamento in punti sommato al punteggio già calcolato dai 5
+// componenti esistenti, MAI come un sesto peso che ne cambia le
+// proporzioni (quei 5 pesi — 22/18/22/22/16 — non sono toccati da
+// questo blocco, né nel valore né nel significato: la riponderazione
+// è una decisione di prodotto separata, non presa qui).
+//
+// Soglie duplicate deliberatamente da recoveryBaseline.js (non importate
+// da lì): questo file non ha altrimenti alcuna dipendenza dal layer
+// salute, e sono 3 righe di soglie, non logica — tenerle qui evita un
+// accoppiamento tra "profilo/readiness" e "health" per così poco.
+const RECOVERY_MIN_SAMPLES = 7;   // sotto: la metrica non entra (rule 4, confidence >= "low")
+const RECOVERY_FULL_SAMPLES = 28; // da qui: peso pieno (confidence "high")
+const RECOVERY_MAX_ADJUSTMENT = 8; // punti, in valore assoluto — un nudge, non una riponderazione
+const RECOVERY_CONFIDENCE_LEVELS = ["low", "medium", "high"]; // "none" o assente -> non usabile
+
+// Peso 0..1 in base al numero di campioni della SINGOLA metrica: sotto
+// RECOVERY_MIN_SAMPLES è 0 (esclusa), sale linearmente fino a 1 a
+// RECOVERY_FULL_SAMPLES. Una metrica con 8 campioni pesa ~0.29, una con
+// 40 pesa 1 (clampato) — non lo stesso, come richiesto.
+function recoverySampleWeight(n) {
+  if (!Number.isFinite(n) || n < RECOVERY_MIN_SAMPLES) return 0;
+  return clamp01(n / RECOVERY_FULL_SAMPLES);
+}
+
+/**
+ * Calcola l'aggiustamento in punti (può essere negativo) dal recovery
+ * oggettivo, e quali metriche vi hanno contribuito. Non fonde MAI il
+ * sonno oggettivo con quello soggettivo del check-in: sono segnali
+ * separati per definizione (un atleta può dormire 8 ore e sentirsi a
+ * pezzi — è informazione, non rumore da mediare via).
+ *
+ * HRV assente (sampleCount 0, es. Polar Flow che non lo scrive mai) non
+ * penalizza: semplicemente non entra nella media pesata, esattamente
+ * come le altre metriche sotto soglia — l'assenza di un segnale non è
+ * un segnale negativo.
+ */
+function computeRecoveryAdjustment(recovery) {
+  const signals = []; // { value: -1..+1 (positivo = meglio), weight: 0..1 }
+  let hrvUsed = false, restingHrUsed = false, sleepUsed = false;
+
+  if (recovery.hrv && Number.isFinite(recovery.hrv.zToday)) {
+    const w = recoverySampleWeight(recovery.hrv.sampleCount);
+    if (w > 0) {
+      // zToday è già in deviazioni standard rispetto alla baseline
+      // (calcolato in recoveryBaseline.js): +2 SD -> pieno positivo.
+      signals.push({ value: clamp(recovery.hrv.zToday / 2, -1, 1), weight: w });
+      hrvUsed = true;
+    }
+  }
+
+  if (recovery.restingHr && Number.isFinite(recovery.restingHr.deltaToday)) {
+    const w = recoverySampleWeight(recovery.restingHr.sampleCount);
+    if (w > 0) {
+      // FC a riposo PIÙ ALTA della baseline è un segnale negativo (segno
+      // invertito rispetto a HRV) — 5bpm di scarto: pieno negativo.
+      signals.push({ value: clamp(-recovery.restingHr.deltaToday / 5, -1, 1), weight: w });
+      restingHrUsed = true;
+    }
+  }
+
+  if (recovery.sleep && Number.isFinite(recovery.sleep.meanEfficiency)) {
+    const w = recoverySampleWeight(recovery.sleep.sampleCount);
+    if (w > 0) {
+      // Efficienza media (oggettiva, non il sonno auto-riferito del
+      // check-in): 0.85 neutro, +-0.10 mappa al pieno range. Soglie
+      // ragionevoli ma non calibrate su dati reali — da rivedere quando
+      // ce ne saranno a sufficienza, non in questo passo.
+      signals.push({ value: clamp((recovery.sleep.meanEfficiency - 0.85) / 0.1, -1, 1), weight: w });
+      sleepUsed = true;
+    }
+  }
+
+  const totalWeight = signals.reduce((sum, s) => sum + s.weight, 0);
+  if (totalWeight === 0) return { points: 0, hrvUsed, restingHrUsed, sleepUsed };
+
+  const combined = signals.reduce((sum, s) => sum + s.value * s.weight, 0) / totalWeight;
+  const points = Math.round(combined * RECOVERY_MAX_ADJUSTMENT);
+  return { points, hrvUsed, restingHrUsed, sleepUsed };
+}
 
 /**
  * @param {object} p
@@ -122,9 +207,12 @@ function clamp01(x) { return Math.max(0, Math.min(1, x)); }
  *   hrTrend    - variazione HR media (bpm); negativo = miglioramento
  *   checkIn    - { fatigue:1-5, sleep:1-5, soreness:"none"|"mild"|"severe" } | null
  *   atl        - Acute Training Load (per rilevare stato "Recovery")
+ *   recovery   - [opzionale] output di computeRecoveryBaseline() | null.
+ *                Assente, null, o confidence "none" -> nessun effetto,
+ *                output IDENTICO al comportamento senza questo parametro.
  * @returns { score:0-100, state, color, advice, components }
  */
-export function computeReadiness({ tsb = 0, hrTrend = null, checkIn = null, atl = 0 } = {}) {
+export function computeReadiness({ tsb = 0, hrTrend = null, checkIn = null, atl = 0, recovery = null } = {}) {
   // Componente TSB: sigmoide centrata su 0
   //   TSB +10 -> ~0.9 | TSB 0 -> ~0.6 | TSB -20 -> ~0.15
   const tsbComp = clamp01(1 / (1 + Math.exp(-(tsb + 5) / 8)));
@@ -145,14 +233,25 @@ export function computeReadiness({ tsb = 0, hrTrend = null, checkIn = null, atl 
                 : checkIn.soreness === "severe" ? 0.25 : 0.7;
   }
 
-  // Pesi: il soggettivo domina la readiness giornaliera, TSB dà il contesto di carico
-  const score = Math.round(100 * (
+  // Pesi INVARIATI (22/18/22/22/16): questo è esattamente il punteggio di
+  // oggi, stesso calcolo, stesso arrotondamento. Il recovery oggettivo
+  // (sotto) non entra qui, mai come sesto peso — vedi computeRecoveryAdjustment.
+  const baseScore = Math.round(100 * (
     0.22 * tsbComp +
     0.18 * hrComp +
     0.22 * sleepComp +
     0.22 * fatigueComp +
     0.16 * soreComp
   ));
+
+  // Recovery oggettivo: SOLO se globalmente usabile (confidence almeno
+  // "low" — "none", assente o null lasciano lo score identico a oggi,
+  // bit per bit). Il gate è sulla confidence GLOBALE del baseline; quale
+  // singola metrica contribuisca poi è deciso da computeRecoveryAdjustment
+  // (rule 4, per-metrica).
+  const recoveryUsable = !!recovery && RECOVERY_CONFIDENCE_LEVELS.includes(recovery.confidence);
+  const recoveryAdj = recoveryUsable ? computeRecoveryAdjustment(recovery) : null;
+  const score = recoveryAdj ? clamp(baseScore + recoveryAdj.points, 0, 100) : baseScore;
 
   // Mappatura stato
   let state, color, advice;
@@ -188,19 +287,31 @@ export function computeReadiness({ tsb = 0, hrTrend = null, checkIn = null, atl 
     advice = "Stato ottimale. Ideale per sparring intenso, sedute chiave o test di performance.";
   }
 
-  return {
-    score,
-    state,
-    color,
-    advice,
-    components: {
-      tsb: Math.round(tsbComp * 100),
-      hr: Math.round(hrComp * 100),
-      sleep: Math.round(sleepComp * 100),
-      fatigue: Math.round(fatigueComp * 100),
-      soreness: Math.round(soreComp * 100),
-    },
+  // components: IDENTICO a oggi (stesse 5 chiavi, stessi valori) quando
+  // il recovery non è usabile — recoveryAdjustment/recoveryDetail vengono
+  // aggiunte SOLO nel ramo con recovery attivo, mai come chiavi presenti-
+  // ma-vuote: la forma dell'oggetto stessa resta invariata senza recovery.
+  const components = {
+    tsb: Math.round(tsbComp * 100),
+    hr: Math.round(hrComp * 100),
+    sleep: Math.round(sleepComp * 100),
+    fatigue: Math.round(fatigueComp * 100),
+    soreness: Math.round(soreComp * 100),
   };
+  if (recoveryAdj) {
+    // Non "recovery": quella chiave è nella blacklist della barriera
+    // privacy di aiCoach.js (assertNoRawHealthData) — un nome diverso è
+    // sufficiente perché qui non c'è comunque nessun valore grezzo, solo
+    // un aggiustamento in punti già derivato, ma il nome esatto va evitato.
+    components.recoveryAdjustment = recoveryAdj.points;
+    components.recoveryDetail = {
+      hrvUsed: recoveryAdj.hrvUsed,
+      restingHrUsed: recoveryAdj.restingHrUsed,
+      sleepUsed: recoveryAdj.sleepUsed,
+    };
+  }
+
+  return { score, state, color, advice, components };
 }
 
 // ─────────────────────────────────────────────────────────

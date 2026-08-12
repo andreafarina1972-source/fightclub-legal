@@ -6,6 +6,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { buildExerciseMenu } from "./exerciseLibrary";
 import { t } from "../i18n";
+import { localDateKey } from "./dateKey";
 
 const PLAN_STORAGE_KEY    = "fightclub_ai_plan_v1";
 const CHECKIN_STORAGE_KEY = "fightclub_checkin_v1";
@@ -126,16 +127,60 @@ export async function clearAiPlan() {
 // STORAGE CHECK-IN SOGGETTIVO
 // ─────────────────────────────────────────────────────────
 
+// Cap a 90 elementi (era 14): una baseline HRV richiede almeno 28 campioni,
+// preferibilmente 60 (vedi services/health/recoveryBaseline.js). Nessuna
+// migrazione di formato necessaria: la chiave resta la stessa, gli elementi
+// già salvati (fino a 14) restano tutti, da qui in avanti se ne accumulano di più.
+const CHECKIN_MAX_ENTRIES = 90;
+
+// Deduplica per data LOCALE (localDateKey, non toISOString/UTC): un solo
+// record per giorno, tenendo il più recente per timestamp completo quando
+// ce n'è più di uno sulla stessa data. L'array in uscita è ordinato dal
+// più recente al più vecchio, indipendentemente dall'ordine in ingresso —
+// non assume che l'input sia già ordinato.
+function dedupeCheckInsByDate(records) {
+  if (!Array.isArray(records)) return [];
+  const byDate = new Map();
+  for (const r of records) {
+    if (!r?.date) continue;
+    const key = localDateKey(new Date(r.date));
+    const existing = byDate.get(key);
+    if (!existing || new Date(r.date) > new Date(existing.date)) {
+      byDate.set(key, r);
+    }
+  }
+  return Array.from(byDate.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
+}
+
 export async function saveCheckIn(checkin) {
   const stored = await loadCheckIns();
-  const updated = [{ ...checkin, date: new Date().toISOString() }, ...stored].slice(0, 14);
+  const now = new Date();
+  // Il timestamp completo resta nel record (serve per il "più recente vince"
+  // sopra); solo la CHIAVE di deduplica è la data locale, non il timestamp.
+  // tzOffset (minuti, da getTimezoneOffset) non è ancora usato: servirà al
+  // passo 5 per le sessioni di sonno che attraversano un cambio di fuso
+  // durante la notte. Non salvarlo ora significherebbe non poterlo
+  // ricostruire in seguito, quindi lo conserviamo da subito.
+  const newRecord = { ...checkin, date: now.toISOString(), tzOffset: now.getTimezoneOffset() };
+  const updated = dedupeCheckInsByDate([newRecord, ...stored]).slice(0, CHECKIN_MAX_ENTRIES);
   await AsyncStorage.setItem(CHECKIN_STORAGE_KEY, JSON.stringify(updated));
 }
 
 export async function loadCheckIns() {
   try {
     const raw = await AsyncStorage.getItem(CHECKIN_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    const deduped = dedupeCheckInsByDate(parsed);
+    if (deduped.length !== parsed.length) {
+      // Migrazione one-shot: lo storico pre-esisteva a questo fix e poteva
+      // contenere più record nello stesso giorno. Persiste la versione
+      // deduplicata così il confronto avviene una sola volta, non ad ogni load.
+      await AsyncStorage.setItem(CHECKIN_STORAGE_KEY, JSON.stringify(deduped));
+    }
+    return deduped;
   } catch { return []; }
 }
 
@@ -157,10 +202,72 @@ function extractPreviousExercises(plan) {
 }
 
 // ─────────────────────────────────────────────────────────
+// BARRIERA PRIVACY — nessun dato sanitario grezzo (HRV, FC a riposo,
+// sonno oggettivo, peso corporeo — da HealthKit/Health Connect) può
+// raggiungere i provider AI (Groq/Gemini/Anthropic). buildPrompt() legge
+// SOLO dai due oggetti sanificati sotto (checkIn -> {fatigue,sleep,soreness},
+// readiness -> {state,score,advice}), mai dai parametri grezzi in ingresso.
+// ─────────────────────────────────────────────────────────
+
+// Estrae solo i tre campi soggettivi del check-in odierno: qualsiasi altro
+// campo eventualmente presente sull'oggetto (es. in futuro dati importati
+// agganciati allo stesso record) viene scartato qui, non a valle.
+function sanitizeCheckIn(checkIn) {
+  if (!checkIn) return null;
+  return {
+    fatigue: checkIn.fatigue,
+    sleep: checkIn.sleep,
+    soreness: checkIn.soreness,
+  };
+}
+
+// Estrae solo la decisione già calcolata (etichetta, punteggio, consiglio),
+// mai i sotto-punteggi di readiness.components (tsb/hr/sleep/fatigue/soreness)
+// e mai, in futuro, i valori recovery grezzi che concorrono al punteggio.
+function sanitizeReadiness(readiness) {
+  if (!readiness) return null;
+  return {
+    state: readiness.state,
+    score: readiness.score,
+    advice: readiness.advice,
+  };
+}
+
+// Chiavi che non devono MAI comparire (a qualunque profondità) nei parametri
+// passati a buildPrompt: se compaiono, un dato sanitario grezzo sta per
+// entrare nel testo inviato ai provider AI. Verifica attiva solo in sviluppo:
+// costo dev-only, l'oggetto athleteData è comunque piccolo (nessun array
+// di sessioni/routePoints al suo interno).
+const FORBIDDEN_HEALTH_KEYS = ["hrv", "restingHr", "bodyWeight", "sleepMin", "efficiency", "sources", "recovery"];
+
+function assertNoRawHealthData(athleteData) {
+  if (typeof __DEV__ === "undefined" || !__DEV__) return;
+  const found = new Set();
+  const seen = new Set();
+  (function scan(obj) {
+    if (!obj || typeof obj !== "object" || seen.has(obj)) return;
+    seen.add(obj);
+    for (const key of Object.keys(obj)) {
+      if (FORBIDDEN_HEALTH_KEYS.includes(key)) found.add(key);
+      const val = obj[key];
+      if (val && typeof val === "object") scan(val);
+    }
+  })(athleteData);
+  if (found.size > 0) {
+    throw new Error(
+      "aiCoach.buildPrompt: rilevate chiavi vietate nei parametri (dati sanitari grezzi verso l'AI): " +
+        Array.from(found).join(", ")
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────
 // COSTRUTTORE PROMPT
 // ─────────────────────────────────────────────────────────
 
 function buildPrompt(athleteData) {
+  assertNoRawHealthData(athleteData);
+
   const {
     ctl = 0, atl = 0, tsb = 0, weeklyTSS = 0,
     vo2max = null, vo2maxTrend = null,
@@ -208,10 +315,11 @@ function buildPrompt(athleteData) {
   }
 
   // ── Blocco readiness ───────────────────────────────────
+  const safeReadiness = sanitizeReadiness(readiness);
   let readinessText = "";
-  if (readiness) {
-    readinessText = "\nSTATO DI READINESS: " + readiness.state + " (score " + readiness.score + "/100)"
-      + "\n- Indicazione: " + readiness.advice;
+  if (safeReadiness) {
+    readinessText = "\nSTATO DI READINESS: " + safeReadiness.state + " (score " + safeReadiness.score + "/100)"
+      + "\n- Indicazione: " + safeReadiness.advice;
   }
 
   // ── Blocco periodizzazione ─────────────────────────────
@@ -224,8 +332,9 @@ function buildPrompt(athleteData) {
       + "\n- Volume target fase: " + periodization.volume;
   }
 
-  const checkInText = checkIn
-    ? "\nCHECK-IN ODIERNO:\n- Fatica: " + checkIn.fatigue + "/5\n- Sonno: " + checkIn.sleep + "/5\n- Dolori: " + (checkIn.soreness === "none" ? "nessuno" : checkIn.soreness === "mild" ? "lievi" : "intensi")
+  const safeCheckIn = sanitizeCheckIn(checkIn);
+  const checkInText = safeCheckIn
+    ? "\nCHECK-IN ODIERNO:\n- Fatica: " + safeCheckIn.fatigue + "/5\n- Sonno: " + safeCheckIn.sleep + "/5\n- Dolori: " + (safeCheckIn.soreness === "none" ? "nessuno" : safeCheckIn.soreness === "mild" ? "lievi" : "intensi")
     : "";
 
   const vo2Text = vo2max

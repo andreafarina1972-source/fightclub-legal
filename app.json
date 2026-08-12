@@ -37,7 +37,16 @@
           "androidAppId": "ca-app-pub-7888719103540832~2983769443"
         }
       ],
-      "./release-signing-plugin"
+      "./release-signing-plugin",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26
+          }
+        }
+      ],
+      "react-native-health-connect"
     ],
     "splash": {
       "image": "./assets/splash.png",
@@ -66,7 +75,12 @@
         "RECORD_AUDIO",
         "FOREGROUND_SERVICE_LOCATION",
         "INTERNET",
-        "ACCESS_NETWORK_STATE"
+        "ACCESS_NETWORK_STATE",
+        "android.permission.health.READ_HEART_RATE_VARIABILITY",
+        "android.permission.health.READ_RESTING_HEART_RATE",
+        "android.permission.health.READ_SLEEP",
+        "android.permission.health.READ_WEIGHT",
+        "android.permission.health.READ_HEALTH_DATA_HISTORY"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

@@ -14,6 +14,8 @@ import PaywallScreen from "./src/screens/PaywallScreen";
 
 import { loadSounds } from "./src/services/soundManager";
 import { Audio } from "expo-av";
+import * as healthProvider from "./src/services/health/healthProvider";
+import { syncRecoveryData, getLastSyncAt } from "./src/services/health/recoveryStorage";
 
 import { HistoryProvider } from "./src/context/HistoryContext";
 import { WorkoutProvider } from "./src/context/WorkoutContext";
@@ -80,6 +82,28 @@ function AppInner() {
       }
     }
     initAudio();
+  }, []);
+
+  // Passo 8 — sync automatica del recupero all'apertura app, se sono
+  // passate più di 4 ore dall'ultimo sync riuscito (o non ce n'è mai
+  // stato uno). Fallimento silenzioso per costruzione: isAvailable() e
+  // syncRecoveryData() non lanciano mai (vedi healthProvider.js/
+  // recoveryStorage.js) — se la piattaforma non è supportata, i permessi
+  // non sono concessi, o qualunque altra cosa va storta, questo effetto
+  // semplicemente non fa nulla di osservabile. Nessun blocco dell'avvio:
+  // fire-and-forget, non attende il risultato.
+  useEffect(() => {
+    const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000;
+    (async () => {
+      try {
+        if (!(await healthProvider.isAvailable())) return;
+        const lastSync = await getLastSyncAt();
+        const dueForSync = !lastSync || Date.now() - new Date(lastSync).getTime() > SYNC_INTERVAL_MS;
+        if (dueForSync) await syncRecoveryData();
+      } catch {
+        // silenzioso per costruzione, vedi commento sopra
+      }
+    })();
   }, []);
 
   if (!ready) return null;

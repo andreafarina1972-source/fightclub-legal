@@ -41,12 +41,37 @@ import { useLanguage } from "../i18n/LanguageContext";
 // ✅ voice coach toggle
 import { getVoiceCoachEnabled, setVoiceCoachEnabled } from "../services/voiceCoach";
 
+// 🩺 Passo 8 — integrazione dati salute (sola lettura: HRV, FC a riposo,
+// sonno, peso). Unico punto d'accesso: healthProvider.js (mai
+// healthKit.js/healthConnect.js/noop.js direttamente).
+import * as healthProvider from "../services/health/healthProvider";
+import {
+  getLastSyncAt,
+  syncRecoveryData,
+  clearRecoveryData,
+  isHealthIntegrationEnabled,
+  setHealthIntegrationEnabled,
+} from "../services/health/recoveryStorage";
+
 // FIX: chiave allineata a hrZones.js (AGE_KEY = "athleteAge")
 // Prima era "userAge" → getAthleteAge() non leggeva mai l'età impostata dall'utente
 const USER_AGE_KEY = "athleteAge";
 // Stessa chiave già letta (ma mai scritta finora) da HomeScreen.js per la stima VO2max
+//
+// Punto chiarito (addendum health, "Da chiarire prima della Fase 2"): questo
+// è un valore singolo inserito a mano, usato SOLO dalla formula VO2max
+// (vo2Utils.js/metrics.js). Deliberatamente NON collegato al meccanismo di
+// precedenza "manual" di recoveryStorage.js: quello copre il restingHr
+// giornaliero importato che alimenta baseline/readiness, un dato diverso
+// per scopo anche se stessa unità fisica. Decisione di Andrea: restano
+// separati, nessuna fusione.
 const HR_REST_KEY = "hrRest";
 const PRIVACY_POLICY_URL = "https://andreafarina1972-source.github.io/fightclub-legal/";
+
+// I quattro tipi core (vedi healthConnect.js/healthKit.js): "connesso" nella
+// UI significa che almeno uno di questi risulta concesso. ReadHealthDataHistory
+// non ne fa parte: è il permesso opzionale dell'import storico (sezione separata).
+const CORE_HEALTH_TYPES = ["HeartRateVariabilityRmssd", "RestingHeartRate", "SleepSession", "Weight"];
 
 export default function SettingsScreen({ navigation }) {
   const { isPro, restore } = usePro();
@@ -98,8 +123,32 @@ export default function SettingsScreen({ navigation }) {
   const [visualizerActive, setVisualizerActive] = useState(false);
   const soundTimeout = useRef(null);
 
+  // 🩺 DATI SALUTE (passo 8)
+  const [healthAvailable, setHealthAvailable] = useState(null); // null = non ancora verificato
+  const [healthEnabled, setHealthEnabled] = useState(false);    // preferenza utente (vedi recoveryStorage)
+  const [healthGranted, setHealthGranted] = useState([]);       // tipi con permesso OS concesso
+  const [healthConnecting, setHealthConnecting] = useState(false);
+  const [healthLastSync, setHealthLastSync] = useState(null);
+  const [historyImporting, setHistoryImporting] = useState(false);
+
+  const healthConnected = healthEnabled && healthGranted.some((type) => CORE_HEALTH_TYPES.includes(type));
+  const historyGranted = healthGranted.includes("ReadHealthDataHistory");
+
+  const loadHealthStatus = async () => {
+    try {
+      const avail = await healthProvider.isAvailable();
+      setHealthAvailable(avail);
+      setHealthEnabled(await isHealthIntegrationEnabled());
+      if (avail) setHealthGranted((await healthProvider.getGrantedPermissions()) || []);
+      setHealthLastSync(await getLastSyncAt());
+    } catch {
+      setHealthAvailable(false);
+    }
+  };
+
   useEffect(() => {
     loadSavedSettings();
+    loadHealthStatus();
     return () => {
       if (saveSensTimer.current) clearTimeout(saveSensTimer.current);
       if (saveAgeTimer.current) clearTimeout(saveAgeTimer.current);
@@ -318,6 +367,68 @@ export default function SettingsScreen({ navigation }) {
     setHrStatus("disconnected");
   };
 
+  // 🩺 DATI SALUTE (passo 8)
+  //
+  // Nessun blocco su permessi negati, anche solo parziali: Health Connect
+  // concede per singolo permesso (es. l'utente nega il peso, il resto
+  // funziona comunque) — qui ci si limita a leggere lo stato reale dopo
+  // la richiesta, mai a interpretare un "non tutto concesso" come un
+  // fallimento da segnalare.
+  const handleHealthConnect = async () => {
+    setHealthConnecting(true);
+    try {
+      await setHealthIntegrationEnabled(true);
+      await healthProvider.requestPermissions();
+      setHealthGranted((await healthProvider.getGrantedPermissions()) || []);
+      const res = await syncRecoveryData();
+      if (res.ok) setHealthLastSync(res.lastSync);
+    } catch {
+      // silenzioso: permessi negati o piattaforma non disponibile sono esiti normali
+    } finally {
+      setHealthConnecting(false);
+    }
+  };
+
+  const handleHealthDisconnect = () => {
+    Alert.alert(
+      t("settingsScreen.health.disconnectConfirmTitle"),
+      t("settingsScreen.health.disconnectConfirmBody"),
+      [
+        { text: t("common.cancel"), style: "cancel" },
+        {
+          text: t("settingsScreen.health.disconnectConfirmAction"),
+          style: "destructive",
+          onPress: async () => {
+            await clearRecoveryData(); // disattiva anche il flag di integrazione
+            setHealthEnabled(false);
+            setHealthLastSync(null);
+          },
+        },
+      ]
+    );
+  };
+
+  // Opt-in separato dal collegamento principale: presentato per il
+  // beneficio (baseline immediata), non come richiesta di permesso. Se lo
+  // storico esteso torna 0 record aggiuntivi non è un errore — molte
+  // fonti semplicemente non hanno nulla di più vecchio — quindi nessun
+  // Alert d'errore qui, solo l'aggiornamento silenzioso dello stato.
+  const handleImportHistory = async () => {
+    setHistoryImporting(true);
+    try {
+      const granted = await healthProvider.requestHistoryPermission();
+      if (granted) {
+        const res = await syncRecoveryData({ lookbackDays: 30 });
+        if (res.ok) setHealthLastSync(res.lastSync);
+      }
+      setHealthGranted((await healthProvider.getGrantedPermissions()) || []);
+    } catch {
+      // silenzioso
+    } finally {
+      setHistoryImporting(false);
+    }
+  };
+
   // ✅ Cambio lingua (globale) + re-render app
   const applyLanguage = async (code) => {
     try {
@@ -372,6 +483,90 @@ export default function SettingsScreen({ navigation }) {
         <View style={styles.root}>
           <Text style={styles.title}>{t("settings")}</Text>
           <SoundLevelVisualizer active={visualizerActive} />
+
+          {/* 🩺 DATI SALUTE (passo 8) */}
+          {healthAvailable === false && (
+            <GlassCard>
+              <Text style={styles.label}>{t("settingsScreen.health.title")}</Text>
+              <Text style={styles.sub}>{t("settingsScreen.health.unavailable")}</Text>
+            </GlassCard>
+          )}
+
+          {healthAvailable === true && (
+            <GlassCard>
+              <Text style={styles.label}>{t("settingsScreen.health.title")}</Text>
+
+              {!healthConnected ? (
+                <>
+                  <Text style={styles.sub}>{t("settingsScreen.health.intro")}</Text>
+
+                  {/* Dichiarazione "resta sul dispositivo": non in fondo in
+                      grigio chiaro — è la ragione per cui si concedono i
+                      permessi, quindi ben visibile, prima del bottone. */}
+                  <Text style={[styles.sub, { marginTop: 12, fontWeight: "700", color: "#37E293" }]}>
+                    🔒 {t("settingsScreen.health.onDeviceDeclaration")}
+                  </Text>
+
+                  <Text style={[styles.subSmall, { marginTop: 12, fontWeight: "700" }]}>
+                    {t("settingsScreen.health.readsTitle")}
+                  </Text>
+                  <Text style={styles.sub}>{t("settingsScreen.health.readsList")}</Text>
+
+                  <Text style={[styles.subSmall, { marginTop: 10, fontWeight: "700" }]}>
+                    {t("settingsScreen.health.notReadTitle")}
+                  </Text>
+                  <Text style={styles.sub}>{t("settingsScreen.health.notReadBody")}</Text>
+
+                  <TouchableOpacity style={styles.profileBtn} onPress={handleHealthConnect} disabled={healthConnecting}>
+                    <Text style={styles.profileText}>
+                      {healthConnecting ? t("settingsScreen.health.connecting") : t("settingsScreen.health.connectButton")}
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.sub}>
+                    {t("common.status")}:{" "}
+                    <Text style={{ fontWeight: "700", color: "#37E293" }}>{t("settingsScreen.health.connectedLabel")}</Text>
+                  </Text>
+                  <Text style={[styles.subSmall, { marginTop: 4 }]}>{t("settingsScreen.health.connectedReading")}</Text>
+
+                  <Text style={[styles.sub, { marginTop: 10, fontWeight: "700", color: "#37E293" }]}>
+                    🔒 {t("settingsScreen.health.onDeviceDeclaration")}
+                  </Text>
+
+                  <Text style={[styles.sub, { marginTop: 12 }]}>
+                    {t("settingsScreen.health.lastSyncLabel")}:{" "}
+                    <Text style={{ fontWeight: "700", color: "#fff" }}>
+                      {healthLastSync ? new Date(healthLastSync).toLocaleString() : t("settingsScreen.health.lastSyncNever")}
+                    </Text>
+                  </Text>
+
+                  <TouchableOpacity style={[styles.profileBtn, { backgroundColor: "#331111" }]} onPress={handleHealthDisconnect}>
+                    <Text style={styles.profileText}>{t("settingsScreen.health.disconnectButton")}</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </GlassCard>
+          )}
+
+          {/* Import storico — opt-in SEPARATO dal collegamento principale,
+              presentato per il beneficio (baseline immediata), non per il
+              permesso. Visibile solo a integrazione già attiva. */}
+          {healthConnected && (
+            <GlassCard>
+              <Text style={styles.label}>{t("settingsScreen.health.historyTitle")}</Text>
+              <Text style={styles.sub}>{t("settingsScreen.health.historyBenefit")}</Text>
+              <TouchableOpacity style={styles.profileBtn} onPress={handleImportHistory} disabled={historyImporting}>
+                <Text style={styles.profileText}>
+                  {historyImporting ? t("settingsScreen.health.historyImporting") : t("settingsScreen.health.historyButton")}
+                </Text>
+              </TouchableOpacity>
+              {historyGranted && (
+                <Text style={[styles.subSmall, { marginTop: 8 }]}>{t("settingsScreen.health.historyActiveNote")}</Text>
+              )}
+            </GlassCard>
+          )}
 
           {/* ⭐ PRO */}
           <GlassCard>
