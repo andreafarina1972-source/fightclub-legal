@@ -219,6 +219,97 @@ export async function requestHistoryPermission() {
   }
 }
 
+// ─────────────────────────────────────────────────────────
+// Riduzione volume + paginazione (12/08/2026, FC a riposo corretta lo
+// stesso giorno — vedi sotto)
+// ─────────────────────────────────────────────────────────
+//
+// Diagnostica QA sul dispositivo reale (vedi correzione BUG storico
+// sopra): una singola sorgente (Zepp/Huami) produce 1000 record HRV in
+// soli 14gg — esattamente il taglio di una pagina, MAI seguita
+// (pageToken ignorato). Il fabbisogno reale per HRV è UN campione al
+// giorno (quello scelto da pickWakeWindowSample in
+// recoveryAggregate.js, entro la finestra di risveglio o il fallback
+// fisso 04-11 locali) — interrogare l'intera finestra multi-giorno per
+// poi scartare quasi tutto è spreco, ed è la causa diretta del rischio
+// di paginazione.
+//
+// FC a riposo NON segue più questa logica (un primo tentativo le
+// applicava lo stesso taglio orario di HRV — vedi la sua query più
+// sotto per il perché era sbagliato e cosa fa ora).
+
+// Finestra di query giornaliera per HRV: 03-12 locale copre per intero
+// il fallback fisso di recoveryAggregate.js (04-11, un'ora di margine
+// per lato) e la finestra di risveglio ±2h per la stragrande
+// maggioranza dei risvegli plausibili. Un risveglio dopo le 10
+// (wake-window che sconfina oltre le 12) resterebbe parzialmente
+// fuori: trade-off accettato, il fallback fisso non è mai intaccato.
+const MORNING_QUERY_START_HOUR = 3;
+const MORNING_QUERY_END_HOUR = 12;
+
+// Elenca ogni giorno di calendario LOCALE in [fromDate, toDate], estremi
+// inclusi. Ancorato alla mezzanotte locale di ciascun giorno, non a
+// multipli di 24h da fromDate: un fromDate/toDate a metà giornata copre
+// comunque il giorno intero, come serve per le finestre 03-12 sotto.
+function eachLocalDay(fromDate, toDate) {
+  const days = [];
+  const cursor = new Date(fromDate);
+  cursor.setHours(0, 0, 0, 0);
+  const last = new Date(toDate);
+  last.setHours(0, 0, 0, 0);
+  while (cursor <= last) {
+    days.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return days;
+}
+
+// Finestra 03:00-12:00 locale del giorno indicato, ritagliata dentro
+// [minDate, maxDate] (il range effettivamente richiesto a
+// readRecoveryData). Ritorna null se il ritaglio produce una finestra
+// vuota o invertita (giorno di bordo il cui 03-12 locale cade
+// interamente fuori dal range richiesto) — il chiamante salta la query
+// per quel giorno, invece di mandare un timeRangeFilter malformato.
+function morningWindow(day, minDate, maxDate) {
+  const start = new Date(day);
+  start.setHours(MORNING_QUERY_START_HOUR, 0, 0, 0);
+  const end = new Date(day);
+  end.setHours(MORNING_QUERY_END_HOUR, 0, 0, 0);
+  const clampedStart = start < minDate ? minDate : start;
+  const clampedEnd = end > maxDate ? maxDate : end;
+  if (clampedStart >= clampedEnd) return null;
+  return { start: clampedStart, end: clampedEnd };
+}
+
+// Rete di sicurezza paginazione: nessuna query in questo file dovrebbe
+// più avvicinarsi al limite di una pagina dopo il taglio giornaliero
+// sopra, ma sonno/peso restano su query a finestra intera (vedi sotto,
+// pochi record per natura) e una sorgente futura più fitta di Zepp
+// potrebbe comunque saturare una pagina. Segue pageToken finché la
+// risposta ne restituisce uno, fino a MAX_PAGES; oltre quel tetto si
+// ferma e logga, mai un loop illimitato. ascendingOrder:false esplicito
+// (mai assunto — verificato che l'SDK non lo documenta come default):
+// se il tetto scatta, si perdono i record PIÙ VECCHI della pagina non
+// letta, mai i più recenti, che sono quelli che contano per la baseline.
+const MAX_PAGES = 20;
+async function readAllPages(sdk, recordType, timeRangeFilter) {
+  const records = [];
+  let pageToken;
+  let pages = 0;
+  do {
+    const options = { timeRangeFilter, ascendingOrder: false };
+    if (pageToken) options.pageToken = pageToken;
+    const res = await sdk.readRecords(recordType, options).catch(() => ({ records: [] }));
+    records.push(...(res?.records || []));
+    pageToken = res?.pageToken;
+    pages += 1;
+  } while (pageToken && pages < MAX_PAGES);
+  if (pageToken) {
+    console.log(`[health] readAllPages(${recordType}): tetto di ${MAX_PAGES} pagine raggiunto, record più vecchi di questa finestra scartati`);
+  }
+  return records;
+}
+
 export async function readRecoveryData(fromDate, toDate) {
   const sdk = getSdk();
   if (!sdk) return [];
@@ -235,29 +326,69 @@ export async function readRecoveryData(fromDate, toDate) {
       if (fromDate < cutoff) effectiveFromDate = cutoff;
     }
 
-    const timeRangeFilter = {
+    // Finestra dell'intera richiesta — usata da FC a riposo, sonno e
+    // peso (vedi sotto perché FC a riposo, a differenza di HRV, non usa
+    // il taglio giornaliero 03-12).
+    const wholeWindowFilter = {
       operator: "between",
       startTime: effectiveFromDate.toISOString(),
       endTime: toDate.toISOString(),
     };
 
-    const [hrvRaw, restingHrRaw, sleepRaw, weightRaw] = await Promise.all([
-      sdk.readRecords(RECORD_TYPES.hrv, { timeRangeFilter }).catch(() => ({ records: [] })),
-      sdk.readRecords(RECORD_TYPES.restingHr, { timeRangeFilter }).catch(() => ({ records: [] })),
-      sdk.readRecords(RECORD_TYPES.sleep, { timeRangeFilter }).catch(() => ({ records: [] })),
-      sdk.readRecords(RECORD_TYPES.weight, { timeRangeFilter }).catch(() => ({ records: [] })),
+    // HRV: una query PER GIORNO limitata alla finestra 03-12 locale
+    // (vedi sopra), non un'unica query sull'intera finestra — riduce il
+    // volume da migliaia a poche decine di record per giorno, rendendo
+    // la paginazione un non-problema nella pratica (resta comunque
+    // gestita da readAllPages come rete di sicurezza). Confermato sul
+    // dispositivo reale: senza il taglio, 1000 record TRONCATI in
+    // 14gg da un'unica sorgente; con il taglio, 4891 record COMPLETI
+    // in 31gg, nessuna pagina mai satura.
+    const days = eachLocalDay(effectiveFromDate, toDate);
+    const hrvByDay = await Promise.all(
+      days.map((day) => {
+        const win = morningWindow(day, effectiveFromDate, toDate);
+        if (!win) return [];
+        const timeRangeFilter = { operator: "between", startTime: win.start.toISOString(), endTime: win.end.toISOString() };
+        return readAllPages(sdk, RECORD_TYPES.hrv, timeRangeFilter);
+      })
+    );
+    const hrvRecords = hrvByDay.flat();
+
+    // FC a riposo: query sull'intera finestra, NESSUN taglio orario (a
+    // differenza di HRV sopra — un primo tentativo applicava lo stesso
+    // taglio 03-12 anche qui, ma era concettualmente sbagliato). In
+    // Health Connect è un AGGREGATO GIORNALIERO calcolato dalla
+    // sorgente, non un campione puntuale misurato al risveglio: il
+    // timestamp è l'ora di SCRITTURA del valore, non di misurazione
+    // (verificato sul dispositivo reale: Zepp scrive alle 21:59 locali,
+    // fuori da qualunque finestra di risveglio plausibile — con il
+    // taglio 03-12 ne restavano 4 su 31gg invece di uno al giorno).
+    // Circa un record al giorno per natura: nessun rischio di
+    // paginazione, nessun motivo di frazionare. L'attribuzione al
+    // giorno e la scelta fra più scritture nello stesso giorno
+    // avvengono in recoveryAggregate.js (ultimo vince, non più
+    // selezione per prossimità al risveglio — vedi lì).
+    const restingHrRecords = await readAllPages(sdk, RECORD_TYPES.restingHr, wholeWindowFilter);
+
+    // Sonno e peso: pochi record anche su finestre ampie (una o due
+    // sessioni a notte, una manciata di pesate) — nessun motivo di
+    // frazionarli per giorno, la query sull'intera finestra resta la
+    // scelta giusta.
+    const [sleepRecords, weightRecords] = await Promise.all([
+      readAllPages(sdk, RECORD_TYPES.sleep, wholeWindowFilter),
+      readAllPages(sdk, RECORD_TYPES.weight, wholeWindowFilter),
     ]);
 
-    const hrvSamples = (hrvRaw?.records || []).map((r) => ({
+    const hrvSamples = hrvRecords.map((r) => ({
       measuredAt: r.time,
       value: r.heartRateVariabilityMillis,
       metric: "rmssd", // Health Connect espone sempre rMSSD per questo tipo, mai SDNN
     }));
-    const restingHrSamples = (restingHrRaw?.records || []).map((r) => ({
+    const restingHrSamples = restingHrRecords.map((r) => ({
       measuredAt: r.time,
       value: r.beatsPerMinute,
     }));
-    const sleepSessions = (sleepRaw?.records || []).map((r) => ({
+    const sleepSessions = sleepRecords.map((r) => ({
       startedAt: r.startTime,
       endedAt: r.endTime,
       startZoneOffsetSeconds: r.startZoneOffset?.totalSeconds,
@@ -270,7 +401,7 @@ export async function readRecoveryData(fromDate, toDate) {
         ? r.stages.map((s) => ({ stage: s.stage, startedAt: s.startTime, endedAt: s.endTime }))
         : [],
     }));
-    const weightSamples = (weightRaw?.records || []).map((r) => ({
+    const weightSamples = weightRecords.map((r) => ({
       measuredAt: r.time,
       value: r.weight?.inKilograms, // MassResult in lettura, non il Mass {value,unit} di scrittura
     }));
