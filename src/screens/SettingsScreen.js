@@ -378,6 +378,15 @@ export default function SettingsScreen({ navigation }) {
     setHealthConnecting(true);
     try {
       await setHealthIntegrationEnabled(true);
+      // Specchia subito lo state locale: senza questa riga la UI restava
+      // bloccata su "Collega" dopo un collegamento riuscito, finché lo
+      // schermo non veniva rimontato (uscita e rientro dal tab non
+      // rismonta SettingsScreen — verificato su dispositivo reale). Il
+      // flag persistito è già true a questo punto; sicuro da riflettere
+      // subito anche se i permessi verranno negati poco sotto, perché
+      // "Connesso" in UI dipende comunque anche da healthGranted
+      // (vedi healthConnected), non da questo flag da solo.
+      setHealthEnabled(true);
       await healthProvider.requestPermissions();
       setHealthGranted((await healthProvider.getGrantedPermissions()) || []);
       const res = await syncRecoveryData();
