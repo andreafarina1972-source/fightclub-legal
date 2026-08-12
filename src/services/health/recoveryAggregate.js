@@ -3,8 +3,12 @@
 // Logica di aggregazione condivisa tra healthKit.js e healthConnect.js:
 // attribuzione delle notti di sonno al giorno del RISVEGLIO, fusione delle
 // sessioni di sonno frammentate/sovrapposte, scarto dei sonnellini diurni,
-// selezione del campione HRV/FC a riposo affidabile (finestra al risveglio),
-// e assemblaggio del record giornaliero normalizzato (vedi shape in
+// selezione del campione HRV affidabile (finestra al risveglio) — MA NON
+// per FC a riposo, che segue una regola diversa (attribuzione al giorno del
+// record, ultimo vince — vedi sezione dedicata, corretta il 12/08/2026: in
+// Health Connect è un aggregato giornaliero scritto dalla sorgente a un
+// orario arbitrario, non un campione da cercare vicino al risveglio) — e
+// assemblaggio del record giornaliero normalizzato (vedi shape in
 // healthProvider.js). Pure JS, nessuna dipendenza nativa: la stessa logica
 // vale su entrambe le piattaforme — cambia solo la forma dei campioni
 // grezzi in ingresso, che healthKit.js/healthConnect.js normalizzano
@@ -137,13 +141,17 @@ function computeSleepMetricsFromStages(session) {
 }
 
 // ─────────────────────────────────────────────────────────
-// HRV / FC A RIPOSO — selezione, non "ultimo vince"
+// HRV — selezione per prossimità al risveglio, non "ultimo vince"
 // ─────────────────────────────────────────────────────────
 //
-// Sono interpretabili solo se misurati al risveglio a riposo: un HRV delle
-// 18:00 non è confrontabile con quello delle 7:00, mescolarli produce
-// baseline rumorose (su iOS il campionamento SDNN è sporadico durante il
-// giorno, quindi il rischio è concreto). Regola:
+// SOLO HRV: FC a riposo NON passa più da qui (vedi sezione dedicata più
+// sotto, corretta il 12/08/2026 — era concettualmente sbagliato
+// applicarle la stessa logica, vedi commento lì).
+//
+// L'HRV è interpretabile solo se misurato al risveglio a riposo: un
+// campione delle 18:00 non è confrontabile con quello delle 7:00,
+// mescolarli produce baseline rumorose (su iOS il campionamento SDNN è
+// sporadico durante il giorno, quindi il rischio è concreto). Regola:
 //   - se il giorno ha una sessione di sonno nota, prende il campione più
 //     vicino al risveglio, entro 2 ore dal risveglio (prima o dopo: un
 //     campione notturno terminato pochi minuti prima del risveglio conta
@@ -187,13 +195,42 @@ function pickWakeWindowSample(samples, dateKey, wakeAt) {
   return best;
 }
 
+// ─────────────────────────────────────────────────────────
+// FC A RIPOSO — aggregato giornaliero, non selezione per risveglio
+// ─────────────────────────────────────────────────────────
+//
+// Corretto il 12/08/2026: un primo tentativo passava anche FC a riposo da
+// pickWakeWindowSample sopra, stessa logica di HRV. Sbagliato — in Health
+// Connect (verificato sul dispositivo reale) FC a riposo è un AGGREGATO
+// GIORNALIERO calcolato dalla sorgente, non un campione puntuale misurato
+// al risveglio: il timestamp sul record è l'ora di SCRITTURA del valore,
+// non di misurazione (Zepp scrive alle 21:59 locali). Cercarlo "vicino al
+// risveglio" non ha senso concettuale, e nella pratica scartava quasi
+// tutti i valori (4 su 31gg invece di uno al giorno).
+//
+// Regola: attribuzione al giorno LOCALE del record stesso, "ultimo vince"
+// in caso di più scritture nello stesso giorno — la stessa regola già
+// usata per il peso corporeo più sotto, per lo stesso motivo: è un
+// valore stabile/aggregato da leggere così com'è, non un segnale da
+// campionare nella finestra giusta.
+//
+// Scarta i record con timestamp degenere (anteriore all'anno 2000):
+// placeholder di sorgenti che non datano il valore (osservato: epoch
+// 1970 da Polar). Attribuirli al loro giorno letterale (1/1/1970)
+// creerebbe un bucket-data isolato, mai raggiunto dalle finestre di
+// 90/28gg su cui operano recoveryStorage.js/recoveryBaseline.js — puro
+// rumore da scartare qui, alla fonte.
+const DEGENERATE_TIMESTAMP_CUTOFF_MS = Date.UTC(2000, 0, 1);
+
 /**
  * Assembla i record di recupero giornalieri per l'intervallo richiesto, a
  * partire dai campioni già normalizzati per piattaforma.
  *
  * @param {object} p
  * @param {{measuredAt:string, value:number, metric:"sdnn"|"rmssd"}[]} p.hrvSamples
- * @param {{measuredAt:string, value:number}[]} p.restingHrSamples
+ * @param {{measuredAt:string, value:number}[]} p.restingHrSamples  aggregato
+ *   giornaliero, non campione — "ultimo vince" per giorno locale del
+ *   record, timestamp anteriori al 2000 scartati (vedi sopra).
  * @param {{startedAt:string, endedAt:string, totalMin?:number,
  *   startZoneOffsetSeconds?:number, endZoneOffsetSeconds?:number,
  *   stages?:{stage:number, startedAt:string, endedAt:string}[]}[]} p.sleepSessions
@@ -225,8 +262,10 @@ export function buildDailyRecoveryRecords({
   }
 
   // 1) Sonno per primo: scarta i pisolini diurni, fonde le sessioni notturne
-  // frammentate, attribuisce al giorno del risveglio. Serve prima di HRV/FC
-  // a riposo perché la loro finestra di selezione è ancorata al risveglio.
+  // frammentate, attribuisce al giorno del risveglio. Serve prima di HRV,
+  // la cui finestra di selezione è ancorata al risveglio — NON serve più a
+  // FC a riposo, che ora attribuisce al giorno del proprio timestamp di
+  // scrittura (vedi sezione dedicata sopra).
   const nightSessions = (sleepSessions || []).filter((s) => s?.startedAt && s?.endedAt && isNightSession(s));
   const mergedSleep = mergeOverlappingSleepSessions(nightSessions);
   const wakeAtByDate = new Map();
@@ -263,26 +302,43 @@ export function buildDailyRecoveryRecords({
     };
   }
 
-  // 2) HRV / FC a riposo: un giorno candidato è ogni data con sonno noto,
-  // più ogni data derivata dal giorno locale "naive" dei campioni stessi
-  // (copre il caso senza sonno, dove serve comunque sapere quali giorni
-  // controllare per la finestra fissa 04:00-11:00).
+  // 2) HRV: un giorno candidato è ogni data con sonno noto, più ogni data
+  // derivata dal giorno locale "naive" dei campioni stessi (copre il caso
+  // senza sonno, dove serve comunque sapere quali giorni controllare per
+  // la finestra fissa 04:00-11:00). FC a riposo non contribuisce più a
+  // questo insieme (vedi passo 2b sotto): non ha bisogno del giorno di
+  // risveglio per essere attribuita.
   const candidateDates = new Set(wakeAtByDate.keys());
   for (const s of hrvSamples) if (s?.measuredAt) candidateDates.add(localDateKey(new Date(s.measuredAt)));
-  for (const s of restingHrSamples) if (s?.measuredAt) candidateDates.add(localDateKey(new Date(s.measuredAt)));
 
   for (const dateKey of candidateDates) {
     const wakeAt = wakeAtByDate.get(dateKey) || null;
     // ensure() SEMPRE, non solo quando si trova un campione valido: un
-    // giorno candidato senza campioni affidabili deve comunque comparire
-    // con hrv/restingHr esplicitamente null, non sparire dall'output.
+    // giorno candidato senza campione HRV affidabile deve comunque
+    // comparire con hrv esplicitamente null, non sparire dall'output.
     const rec = ensure(dateKey);
 
     const hrvPick = pickWakeWindowSample(hrvSamples, dateKey, wakeAt);
     if (hrvPick) rec.hrv = { value: hrvPick.value, metric: hrvPick.metric };
+  }
 
-    const rhrPick = pickWakeWindowSample(restingHrSamples, dateKey, wakeAt);
-    if (rhrPick) rec.restingHr = rhrPick.value;
+  // 2b) FC a riposo: aggregato giornaliero, non selezione per risveglio
+  // (vedi sezione dedicata sopra). Attribuzione al giorno LOCALE del
+  // timestamp di scrittura del record, "ultimo vince" — stessa forma del
+  // passo 3 (peso) subito sotto, per lo stesso motivo. I record con
+  // timestamp anteriore all'anno 2000 (placeholder di sorgenti che non
+  // datano il valore, es. epoch 1970 da Polar) sono scartati qui, prima
+  // di entrare in qualunque bucket-data.
+  for (const s of restingHrSamples) {
+    if (!Number.isFinite(s?.value) || !s?.measuredAt) continue;
+    const measuredMs = new Date(s.measuredAt).getTime();
+    if (!Number.isFinite(measuredMs) || measuredMs < DEGENERATE_TIMESTAMP_CUTOFF_MS) continue;
+    const key = localDateKey(new Date(s.measuredAt));
+    const rec = ensure(key);
+    if (rec.restingHr == null || measuredMs >= (rec._restingHrAt ?? -Infinity)) {
+      rec.restingHr = s.value;
+      rec._restingHrAt = measuredMs;
+    }
   }
 
   // 3) Peso corporeo: stabile, "ultimo campione del giorno vince".
@@ -299,6 +355,6 @@ export function buildDailyRecoveryRecords({
   // Rimuove i campi interni di supporto prima di restituire, e ordina per
   // data crescente.
   return Array.from(byDate.values())
-    .map(({ _weightAt, ...clean }) => clean)
+    .map(({ _weightAt, _restingHrAt, ...clean }) => clean)
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
