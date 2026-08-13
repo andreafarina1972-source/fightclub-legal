@@ -325,6 +325,13 @@ export default function TimerScreen({ route }) {
 
     addSession({
       id: Date.now().toString(),
+      // type esplicito (13/08/2026, BRIEF-srpe.md): prima cadeva sul default
+      // "workout" di normalizeSessionShape, indistinguibile da QuickTimer.
+      // Descrive lo STRUMENTO (timer a round strutturati), non il contenuto —
+      // sparring vs tecnica resta impact.roundsSparring, non type. Lo storico
+      // esistente non viene riclassificato: "workout" resta valore legacy
+      // valido, non sappiamo da quale schermata provenissero quei record.
+      type: "rounds",
       workoutId: workout.id || null,
       workoutName: workout.name,
       date: new Date().toISOString(),
@@ -449,6 +456,7 @@ if (String(phase || "").toLowerCase() === "round" && isFirstRound && seconds <= 
 
           addSession({
             id: Date.now().toString(),
+            type: "rounds", // stesso strumento della sessione completata, vedi sopra
             workoutId: workout.id || null,
             workoutName: workout.name || t("timerScreen.workoutDefault"),
             date: new Date().toISOString(),

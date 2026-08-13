@@ -21,6 +21,30 @@ const K_CTL = 1 - 1 / CTL_DAYS; // 0.97619
 const K_ATL = 1 - 1 / ATL_DAYS; // 0.85714
 
 // ─────────────────────────────────────────────────────────
+// DURATA SESSIONE
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Durata di una sessione in minuti. I campi NON sono uniformi tra le
+ * schermate che salvano sessioni (verificato in Fase 0 del brief sRPE,
+ * 13/08/2026): TimerScreen/QuickTimerScreen/WorkoutRunScreen scrivono
+ * totalSeconds (+totalMinutes), RunningScreen/TrainingScreen scrivono solo
+ * elapsed. Un'unica definizione, non duplicata — usata sia da sessionTSS
+ * sotto sia da setSessionRpe (HistoryContext.js) per loadSrpe: "durata di
+ * una sessione" deve avere UN significato in tutta la pipeline, non due
+ * calcoli che potrebbero divergere silenziosamente.
+ */
+export function sessionDurationMin(session) {
+  if (!session || typeof session !== "object") return 0;
+  return (
+    (Number(session.totalSeconds) > 0 ? session.totalSeconds / 60 : 0) ||
+    (Number(session.elapsed) > 0 ? session.elapsed / 60 : 0) ||
+    (Number(session.totalMinutes) > 0 ? session.totalMinutes : 0) ||
+    (Number(session.durationSeconds) > 0 ? session.durationSeconds / 60 : 0)
+  );
+}
+
+// ─────────────────────────────────────────────────────────
 // TSS PER SESSIONE
 // ─────────────────────────────────────────────────────────
 
@@ -41,18 +65,20 @@ const K_ATL = 1 - 1 / ATL_DAYS; // 0.85714
 export function sessionTSS(session) {
   if (!session || typeof session !== "object") return 0;
 
-  // Durata in minuti — legge qualsiasi campo presente
-  const durationMin =
-    (Number(session.totalSeconds) > 0 ? session.totalSeconds / 60 : 0) ||
-    (Number(session.elapsed) > 0 ? session.elapsed / 60 : 0) ||
-    (Number(session.totalMinutes) > 0 ? session.totalMinutes : 0) ||
-    (Number(session.durationSeconds) > 0 ? session.durationSeconds / 60 : 0);
-
+  const durationMin = sessionDurationMin(session);
   if (durationMin < 1) return 0;
 
   // Intensità HR
   const avgHr = Number(session.avgHr);
   const hrMax = Number(session.hrZones?.hrMax || session.zones?.hrMax) || 190;
+  // TODO(sRPE, 13/08/2026): senza HR questa riga assume SEMPRE un'intensità
+  // fissa equivalente a Z3 (moderata) — non è "TRIMP non calcolabile", è un
+  // errore silenzioso: una sessione intensa senza fascia (sparring, pad
+  // work) viene contata come moderata, e il motore decisionale può leggere
+  // "progress" su un atleta che si sta in realtà sovraccaricando. Non
+  // toccare ora (fuori scope, vedi BRIEF-srpe.md Fase 1: solo raccolta e
+  // persistenza). Quando l'sRPE avrà una baseline (~28gg), per le sessioni
+  // senza HR l'sRPE deve SOSTITUIRE questa assunzione fissa, non affiancarla.
   let hrIntensity = 0.50; // default Z3 se non c'è HR
 
   if (Number.isFinite(avgHr) && avgHr > 0 && hrMax > 0) {

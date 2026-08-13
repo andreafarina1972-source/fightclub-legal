@@ -366,6 +366,12 @@ export default function QuickTimerScreen() {
 
     addSession({
       id: Date.now().toString(),
+      // type esplicito (13/08/2026, BRIEF-srpe.md): descrive lo STRUMENTO
+      // (timer libero — può scandire round ma anche circuiti, riscaldamento,
+      // stretching: non un tipo di lavoro), non il contenuto. Nome distinto
+      // da "rounds" (TimerScreen) apposta, per non suggerire una parentela
+      // che non c'è. Lo storico esistente resta "workout" (legacy).
+      type: "quick_timer",
       date: new Date().toISOString(),
       workoutId: null,
       workoutName: t("quickTimer.workoutName", { label: selected.label, rounds }),
@@ -436,6 +442,7 @@ export default function QuickTimerScreen() {
 
           addSession({
             id: Date.now().toString(),
+            type: "quick_timer", // stesso strumento della sessione completata, vedi sopra
             date: new Date().toISOString(),
             workoutId: null,
             workoutName: t("quickTimer.workoutName", { label: snapshot.label, rounds: snapshot.rounds }),

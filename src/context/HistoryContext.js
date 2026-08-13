@@ -1,6 +1,7 @@
 // src/context/HistoryContext.js
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { sessionDurationMin } from "../services/trainingLoad";
 
 const STORAGE_KEY = "fightclub_sessions_v1";
 const VO2_STORAGE_KEY = "fightclub_vo2_v1";
@@ -44,6 +45,15 @@ function normalizeSessionShape(base) {
     type: type || "workout",
     // normalizza e conserva routePoints per running (se presente)
     ...(Array.isArray(routePoints) ? { routePoints } : {}),
+    // sRPE (BRIEF-srpe.md, Fase 1, 13/08/2026) — additivo: i record storici
+    // senza questi campi restano validi, tutti null finché non raccolti.
+    // Solo modello dati qui: nessuna UI li scrive ancora, li scriverà
+    // setSessionRpe sotto quando la Fase 2 collegherà una schermata.
+    rpe: b.rpe ?? null,                       // Borg CR10, intero 0-10
+    loadSrpe: b.loadSrpe ?? null,             // rpe * sessionDurationMin(session)
+    rpeCollectedAt: b.rpeCollectedAt ?? null, // ISO, quando l'atleta ha risposto la prima volta
+    rpeDelayMin: b.rpeDelayMin ?? null,       // minuti da session.date alla risposta
+    rpeEdited: b.rpeEdited ?? null,           // true se rpe è stato corretto dopo la prima risposta
   };
 }
 
@@ -132,6 +142,7 @@ const HistoryContext = createContext({
   clearHistory: async () => {},
   replaceSessions: async () => {},
   reload: async () => {},
+  setSessionRpe: async () => {},
 });
 
 export function HistoryProvider({ children }) {
@@ -246,6 +257,64 @@ export function HistoryProvider({ children }) {
     await persistSessions(next);
   };
 
+  // sRPE (BRIEF-srpe.md, Fase 1) — calcola loadSrpe e persiste. Solo modello
+  // dati: nessuna schermata la chiama ancora (Fase 2/3, non in questo
+  // intervento). Gestisce sia la prima risposta sia una correzione
+  // successiva con la stessa funzione, così la UI futura (qualunque sia)
+  // non deve distinguere i due casi:
+  //   - prima risposta (session.rpe ancora null): imposta rpeCollectedAt =
+  //     adesso e calcola rpeDelayMin da session.date (fine sessione, per
+  //     costruzione: tutte le schermate che chiamano addSession scrivono
+  //     date al momento del salvataggio, subito dopo la fine) a adesso.
+  //   - correzione (session.rpe già valorizzato): rpeCollectedAt e
+  //     rpeDelayMin restano quelli della prima risposta (non ricostruibili
+  //     a posteriori, per esplicita richiesta del brief), si aggiorna solo
+  //     rpe/loadSrpe e si marca rpeEdited: true.
+  const setSessionRpe = async (sessionId, rpe) => {
+    const id = sessionId?.toString?.();
+    if (!id) return;
+
+    // Borg CR10: intero 0-10. Qualunque altro valore viene ignorato (nessun
+    // dato inventato, vedi "Nessun ricalcolo retroattivo" nel brief — lo
+    // stesso principio si applica a un valore fuori scala in ingresso).
+    const rpeNum = Number(rpe);
+    if (!Number.isFinite(rpeNum) || rpeNum < 0 || rpeNum > 10 || !Number.isInteger(rpeNum)) return;
+
+    const idx = sessions.findIndex((s) => s?.id?.toString?.() === id);
+    if (idx === -1) return;
+    const session = sessions[idx];
+
+    // loadSrpe null se la durata manca — meglio un buco che un numero
+    // inventato (stesso principio esplicito del brief per rpe/durata).
+    const durationMin = sessionDurationMin(session);
+    const loadSrpe = durationMin > 0 ? Math.round(rpeNum * durationMin) : null;
+
+    const isFirstResponse = session.rpe == null;
+    const now = new Date();
+
+    let rpeCollectedAt = session.rpeCollectedAt;
+    let rpeDelayMin = session.rpeDelayMin;
+    if (isFirstResponse) {
+      rpeCollectedAt = now.toISOString();
+      const sessionEndMs = Date.parse(session.date || "");
+      rpeDelayMin = Number.isFinite(sessionEndMs) ? Math.round((now.getTime() - sessionEndMs) / 60000) : null;
+    }
+
+    const updated = {
+      ...session,
+      rpe: rpeNum,
+      loadSrpe,
+      rpeCollectedAt,
+      rpeDelayMin,
+      rpeEdited: isFirstResponse ? session.rpeEdited : true,
+    };
+
+    const next = [...sessions];
+    next[idx] = updated;
+    setSessions(next);
+    await persistSessions(next);
+  };
+
   const clearHistory = async () => {
     setSessions([]);
     setVo2Measurements([]);
@@ -291,6 +360,7 @@ export function HistoryProvider({ children }) {
       clearHistory,
       replaceSessions,
       reload,
+      setSessionRpe,
     }),
     [sessions, vo2Measurements, latestVo2]
   );
