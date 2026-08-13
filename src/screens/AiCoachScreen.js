@@ -275,9 +275,12 @@ const LEVEL_COLORS = {
   rest:     "#FF4D6D",
 };
 
-function LoadDecisionCard() {
-  const { decision, readiness, loading } = useLoadDecision();
-
+// Riceve decision/readiness/loading come props, non chiama useLoadDecision()
+// da sola: l'hook viene invocato UNA SOLA VOLTA nel corpo di AiCoachScreen
+// (vedi sotto), così la stessa decisione già calcolata alimenta sia questa
+// card sia doGenerate/buildPrompt (Fase 3) — nessun ricalcolo, vincolo
+// esplicito.
+function LoadDecisionCard({ decision, readiness, loading }) {
   // Caricamento: card leggera, non blocca il resto della schermata (che
   // renderizza comunque sotto, indipendentemente da questo stato).
   if (loading) {
@@ -380,6 +383,11 @@ export default function AiCoachScreen({ navigation }) {
   const [goal,       setGoal]       = useState(null);
   const [athleteProfile, setAthleteProfile] = useState(null);
 
+  // Un'unica chiamata all'hook: alimenta sia LoadDecisionCard sia
+  // handleCheckInDone/doGenerate (Fase 3) — nessun ricalcolo, vincolo
+  // esplicito del brief Fase 3.
+  const { decision: loadDecision, readiness: loadDecisionReadiness, loading: loadDecisionLoading } = useLoadDecision();
+
   // Carica piano salvato all'avvio
   useEffect(() => {
     loadAiPlan().then(p => { if (p) setPlan(p); });
@@ -430,8 +438,12 @@ export default function AiCoachScreen({ navigation }) {
       tsb: athleteData.tsb, hrTrend: athleteData.hrTrend,
       checkIn: checkin, atl: athleteData.atl,
     });
-    await doGenerate({ ...athleteData, checkIn: checkin, readiness });
-  }, [athleteData]);
+    // loadDecision è quella già calcolata da useLoadDecision al mount della
+    // schermata (vedi sopra) — non ricalcolata qui, anche se il check-in
+    // appena inviato è più fresco di quello che l'hook potrebbe aver usato:
+    // "nessun ricalcolo" è un vincolo esplicito della Fase 3.
+    await doGenerate({ ...athleteData, checkIn: checkin, readiness, loadDecision });
+  }, [athleteData, loadDecision]);
 
   const doGenerate = useCallback(async (data) => {
     setLoading(true);
@@ -469,7 +481,7 @@ export default function AiCoachScreen({ navigation }) {
 
         {/* MOTORE DECISIONALE — sopra il resto, calcolato all'apertura
             della schermata (vedi LoadDecisionCard/useLoadDecision) */}
-        <LoadDecisionCard />
+        <LoadDecisionCard decision={loadDecision} readiness={loadDecisionReadiness} loading={loadDecisionLoading} />
 
         {/* HEADER */}
         <View style={styles.headerRow}>

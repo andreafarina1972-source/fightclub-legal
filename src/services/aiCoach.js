@@ -233,6 +233,50 @@ function sanitizeReadiness(readiness) {
   };
 }
 
+// Fase 3 (13/08/2026): estrae SOLO la decisione già presa dal motore
+// (services/loadDecision.js) — livello, CODICI dei motivi (mai il campo
+// `detail` di ciascun reason: contiene valori come acwr/tsb/ctl grezzi,
+// es. building_base.detail={ctl,threshold} — il motivo per cui questa
+// funzione esiste, non un'omissione), variazione suggerita, flag. L'AI
+// riceve la decisione, mai i dati che l'hanno prodotta (stesso principio
+// di sanitizeReadiness/sanitizeCheckIn sopra). I codici non vengono
+// tradotti qui: restano stringhe identificative in inglese, spiegate al
+// modello nel system prompt (GLOSSARIO_MOTIVI) — indipendente dalla lingua
+// di risposta e senza dover mantenere traduzioni duplicate qui.
+//
+// I codici NON vengono rinominati per nascondere parole come "hrv" (es.
+// hrv_trend_down_tsb_low, hrv_depressed_resting_hr_elevated). Decisione
+// esplicita (13/08/2026): la barriera privacy protegge i VALORI, non il
+// vocabolario. hrv_trend_down_tsb_low comunica che una condizione si è
+// verificata, non quale sia l'HRV dell'atleta né il suo scostamento dalla
+// baseline — nessun numero, nessun dato riconducibile alla misurazione
+// grezza. Stesso principio per cui readiness.state passa già come
+// "Overreaching" (sanitizeReadiness sopra): l'etichetta sì, il numero
+// mai. Una mappatura parallela di rinomina sarebbe più fragile, non più
+// sicura: andrebbe mantenuta allineata a ogni nuovo codice introdotto in
+// loadDecision.js, e un codice dimenticato in quella mappatura passerebbe
+// comunque grezzo — un singolo punto di sanificazione (questa funzione,
+// che scarta `detail`) è più robusto di due punti da tenere sincronizzati.
+function sanitizeLoadDecision(loadDecision) {
+  if (!loadDecision) return null;
+  return {
+    level: loadDecision.level,
+    reasonCodes: Array.isArray(loadDecision.reasons)
+      ? loadDecision.reasons.map((r) => r?.code).filter(Boolean)
+      : [],
+    suggestedChange: (loadDecision.suggestedChange && (
+        Number.isFinite(loadDecision.suggestedChange.volumePct) ||
+        Number.isFinite(loadDecision.suggestedChange.intensityPct)
+      ))
+      ? {
+          volumePct: Number.isFinite(loadDecision.suggestedChange.volumePct) ? loadDecision.suggestedChange.volumePct : null,
+          intensityPct: Number.isFinite(loadDecision.suggestedChange.intensityPct) ? loadDecision.suggestedChange.intensityPct : null,
+        }
+      : null,
+    flags: Array.isArray(loadDecision.flags) ? loadDecision.flags.slice() : [],
+  };
+}
+
 // Chiavi che non devono MAI comparire (a qualunque profondità) nei parametri
 // passati a buildPrompt: se compaiono, un dato sanitario grezzo sta per
 // entrare nel testo inviato ai provider AI. Verifica attiva solo in sviluppo:
@@ -265,7 +309,13 @@ function assertNoRawHealthData(athleteData) {
 // COSTRUTTORE PROMPT
 // ─────────────────────────────────────────────────────────
 
-function buildPrompt(athleteData) {
+// Fase 3 (13/08/2026): `loadDecision` è un parametro OPZIONALE aggiuntivo —
+// assente (default null), il prompt generato è identico bit per bit a
+// prima (verificato con test dedicato, vedi commento più sotto). Riceve
+// SOLO la decisione già presa dal motore deterministico (services/
+// loadDecision.js), mai i dati che l'hanno prodotta: coerente con lo
+// stesso principio già applicato a readiness/checkIn sopra.
+export function buildPrompt(athleteData) {
   assertNoRawHealthData(athleteData);
 
   const {
@@ -278,6 +328,7 @@ function buildPrompt(athleteData) {
     profile = null,        // A. profilo atleta
     readiness = null,      // B. readiness
     periodization = null,  // C. periodizzazione
+    loadDecision = null,   // D. decisione carico (Fase 3) — opzionale
     goal = null, checkIn = null, lang = "it",
     previousExercises = [],
   } = athleteData || {};
@@ -332,6 +383,33 @@ function buildPrompt(athleteData) {
       + "\n- Volume target fase: " + periodization.volume;
   }
 
+  // ── Blocco decisione carico (Fase 3) ────────────────────
+  // Solo codici, mai valori (vedi sanitizeLoadDecision). Il significato dei
+  // codici è nel GLOSSARIO_MOTIVI del system prompt, non tradotto qui: non
+  // dipende dalla lingua di risposta e non duplica testo da mantenere.
+  const safeLoadDecision = sanitizeLoadDecision(loadDecision);
+  let loadDecisionText = "";
+  if (safeLoadDecision) {
+    loadDecisionText = "\nDECISIONE CARICO (presa da un motore deterministico esterno, NON da te — vedi PRINCIPIO 8):"
+      + "\n- Livello: " + safeLoadDecision.level
+      + "\n- Motivo/i (codici, vedi GLOSSARIO_MOTIVI): " + (safeLoadDecision.reasonCodes.length ? safeLoadDecision.reasonCodes.join(", ") : "nessuno specifico");
+    if (safeLoadDecision.suggestedChange) {
+      const { volumePct, intensityPct } = safeLoadDecision.suggestedChange;
+      if (Number.isFinite(volumePct) && volumePct !== 0) {
+        loadDecisionText += "\n- Variazione di volume indicata: " + (volumePct > 0 ? "+" : "") + volumePct + "%";
+      }
+      if (Number.isFinite(intensityPct) && intensityPct !== 0) {
+        loadDecisionText += "\n- Variazione di intensita indicata: " + (intensityPct > 0 ? "+" : "") + intensityPct + "%";
+      }
+    }
+    if (safeLoadDecision.flags.length) {
+      loadDecisionText += "\n- Segnali aggiuntivi (codici, vedi GLOSSARIO_MOTIVI): " + safeLoadDecision.flags.join(", ");
+    }
+    if (safeLoadDecision.level === "learning") {
+      loadDecisionText += "\n- NOTA: dati ancora insufficienti per una decisione affidabile. Non presentare il piano come basato su certezze fisiologiche precise: resta su principi generali e prudenti finche' non ci sono abbastanza dati.";
+    }
+  }
+
   const safeCheckIn = sanitizeCheckIn(checkIn);
   const checkInText = safeCheckIn
     ? "\nCHECK-IN ODIERNO:\n- Fatica: " + safeCheckIn.fatigue + "/5\n- Sonno: " + safeCheckIn.sleep + "/5\n- Dolori: " + (safeCheckIn.soreness === "none" ? "nessuno" : safeCheckIn.soreness === "mild" ? "lievi" : "intensi")
@@ -376,6 +454,36 @@ function buildPrompt(athleteData) {
   // Menu esercizi reali filtrato per livello (libreria)
   const exerciseMenu = buildExerciseMenu(volumeLevel);
 
+  // ── Blocco "rispetta, non rivalutare" + glossario motivi (Fase 3) ──────
+  // Presente nel system prompt SOLO se safeLoadDecision esiste: stessa
+  // disciplina di loadDecisionText sopra, per garantire che senza il
+  // parametro il prompt resti identico bit per bit a prima. I codici non
+  // sono tradotti in userPrompt (vedi sanitizeLoadDecision): il glossario
+  // qui è l'unico punto in cui il modello ne apprende il significato,
+  // indipendente dalla lingua di risposta richiesta.
+  const loadDecisionPrinciple = safeLoadDecision
+    ? "8. E' presente una DECISIONE CARICO nella sezione utente, presa da un motore deterministico ESTERNO a te (non un LLM): rispettala, NON rivalutarla e non contraddirla nel piano generato. Il tuo compito e' tradurla in un programma concreto, non discuterne la validita'. In particolare:\n"
+      + "   - livello \"reduce\": il piano NON deve aumentare il volume rispetto alla settimana normale per il livello dell'atleta; targetWeeklyTSS inferiore alla norma, coerente con la variazione di volume indicata se presente.\n"
+      + "   - livello \"rest\": priorita' assoluta a recupero e tecnica leggerissima; evita sedute intense o ad alto volume.\n"
+      + "   - livello \"progress\": puoi aumentare leggermente volume e/o intensita', coerente con la variazione indicata se presente.\n"
+      + "   - livello \"maintain\" con motivo building_base: mantieni il carico della settimana precedente SENZA aumenti — l'obiettivo e' la continuita' (costanza nelle sedute), non l'intensificazione. Comunicalo nel coachNote come un obiettivo positivo, mai come un limite o un deficit.\n"
+      + "   - livello \"maintain\" (altri motivi) o \"learning\": nessun aumento di carico rispetto alla settimana normale per il livello dell'atleta.\n\n"
+      + "GLOSSARIO_MOTIVI (i codici elencati in DECISIONE CARICO, per interpretarli senza tradurli):\n"
+      + "- hrv_depressed_resting_hr_elevated: possibile malessere incipiente (pattern di recupero nervoso basso e frequenza cardiaca a riposo elevata)\n"
+      + "- acute_hrv_sleep_fatigue_crash: crollo acuto di recupero (indicatori nervosi, sonno e fatica)\n"
+      + "- taper_active: settimana di scarico pre-gara\n"
+      + "- acwr_elevated / acwr_still_rising: carico acuto salito rapidamente (o ancora in salita) rispetto al cronico\n"
+      + "- tsb_very_low: forma molto negativa, debito di recupero elevato\n"
+      + "- recent_sparring: sparring pesante nelle ultime 48 ore\n"
+      + "- hrv_trend_down_tsb_low: recupero in calo e forma in debito moderato\n"
+      + "- sleep_below_personal_baseline: sonno recente sotto la media personale dell'atleta\n"
+      + "- building_base: base cronica ancora insufficiente, priorita' alla continuita' non all'aumento\n"
+      + "- progression_window: finestra favorevole alla progressione\n"
+      + "- default_maintain: nessun segnale particolare\n"
+      + "- insufficient_baseline_data: dati ancora insufficienti per una decisione affidabile\n"
+      + "- aggressive_weight_cut_blocks_progress: calo peso aggressivo rilevato, progressione sospesa — se presente NON dare mai, in nessuna parte del piano, indicazioni su come accelerare un calo peso\n\n"
+    : "";
+
   // ── SYSTEM PROMPT professionale ────────────────────────
   const systemPrompt =
     "Sei un preparatore atletico di livello olimpico specializzato nel pugilato, con formazione in fisiologia "
@@ -389,6 +497,7 @@ function buildPrompt(athleteData) {
     + "5. Distribuzione polarizzata: gran parte del volume in bassa intensita', poche sedute realmente intense. Evita la zona grigia.\n"
     + "6. Inserisci almeno un giorno di recupero/recupero attivo a settimana, di piu' se la readiness e' bassa.\n"
     + "7. Motiva fisiologicamente ogni scelta nel campo coachNote. Volume e intensita' proporzionati al livello: per avanzati/agonisti piani completi e impegnativi, non semplificati.\n\n"
+    + loadDecisionPrinciple
     + "Rispondi SEMPRE e SOLO con JSON valido, senza testo aggiuntivo, senza markdown, senza backtick.";
 
   // ── USER PROMPT ────────────────────────────────────────
@@ -396,7 +505,7 @@ function buildPrompt(athleteData) {
     "Genera il programma di allenamento per la PROSSIMA SETTIMANA per questo pugile.\n\n"
     + profileText + "\n"
     + readinessText + "\n"
-    + periodText + "\n\n"
+    + periodText + loadDecisionText + "\n\n"
     + "STATO FISIOLOGICO:\n"
     + "- Sessioni totali: " + totalSessions + " | Streak: " + currentStreak + "gg\n"
     + "- Giorni dall ultima sessione: " + (daysSinceLastSession != null ? daysSinceLastSession : "sconosciuto") + " | Ultimo tipo: " + lastSessionType + "\n"
