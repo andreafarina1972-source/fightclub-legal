@@ -292,6 +292,7 @@ const translations = {
 
     home: {
       subtitle: "Pronto ad allenarti",
+      loadDecisionTitle: "Decisione sul carico",
       nextWorkout: "PROSSIMO ALLENAMENTO",
       startWorkout: "Avvia allenamento",
       lastWorkout: "Ultimo allenamento",
@@ -1103,6 +1104,7 @@ const translations = {
 
   home: {
     subtitle: "Ready to train",
+    loadDecisionTitle: "Load decision",
     nextWorkout: "NEXT WORKOUT",
     startWorkout: "Start workout",
     lastWorkout: "Last workout",

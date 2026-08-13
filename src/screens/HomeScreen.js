@@ -7,6 +7,9 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 
 import GlassCard from "../components/ui/GlassCard";
 import AdBanner from "../components/AdBanner";
+import ProGate from "../components/ProGate";
+import LoadDecisionCard from "../components/LoadDecisionCard";
+import { useLoadDecision } from "../hooks/useLoadDecision";
 import { connectHeartRate, subscribeHeartRate } from "../services/heartRateService";
 
 // ✅ storico (sessions + vo2)
@@ -20,7 +23,6 @@ import { getAthleteAge } from "../services/hrZones";
 // ✅ i18n
 import { t } from "../i18n";
 import { loadAiPlan, getTodaySession, formatWorkoutParams, isPlanCurrentWeek } from "../services/aiCoach";
-import { computeTrainingLoad } from "../services/trainingLoad";
 
 // ✅ formato richiesto: gg/mm/anno  18:42
 function formatDateTime(iso) {
@@ -74,7 +76,11 @@ export default function HomeScreen({ navigation }) {
 
   const [aiPlan, setAiPlan] = useState(null);
   const [aiTodaySession, setAiTodaySession] = useState(null);
-  const { current: tlCurrent } = useMemo(() => computeTrainingLoad(sessions, 90), [sessions]);
+
+  // Un'unica chiamata per schermata (nessun ricalcolo, stesso vincolo di
+  // AiCoachScreen): alimenta la card motore decisionale sotto, dietro
+  // ProGate in modalità teaser perché la home non è già Pro-gated.
+  const { decision: loadDecision, readiness: loadDecisionReadiness, loading: loadDecisionLoading } = useLoadDecision();
   useFocusEffect(useCallback(() => {
     loadAiPlan().then(plan => {
       if (plan && isPlanCurrentWeek(plan)) {
@@ -331,6 +337,26 @@ export default function HomeScreen({ navigation }) {
           contentContainerStyle={{ paddingBottom: 24 + insets.bottom + 90 }}
           showsVerticalScrollIndicator={false}
         >
+          {/* MOTORE DECISIONALE — sopra il resto, come in AiCoachScreen.
+              La home non è dietro ProGate: qui il gating è sulla card
+              stessa (teaser sfocato + CTA per utenti free, stesso pattern
+              di HistoryScreen/TimerScreen). loadingDecisionCard è definita
+              una volta sola e riusata sia come teaser sia come contenuto
+              reale, per non costruire due volte lo stesso JSX. */}
+          {(() => {
+            const loadDecisionCard = (
+              <LoadDecisionCard decision={loadDecision} readiness={loadDecisionReadiness} loading={loadDecisionLoading} />
+            );
+            return (
+              <ProGate
+                title={t("home.loadDecisionTitle") || "Decisione sul carico"}
+                teaser={loadDecisionCard}
+              >
+                {loadDecisionCard}
+              </ProGate>
+            );
+          })()}
+
           {aiPlan && aiTodaySession ? (
             <GlassCard style={[styles.mainTimerCard, { borderColor: "rgba(55,226,147,0.2)" }]}>
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
@@ -345,11 +371,6 @@ export default function HomeScreen({ navigation }) {
                   {aiTodaySession.intensityTarget && (
                     <Text style={styles.aiIntensity}>{aiTodaySession.intensityTarget}</Text>
                   )}
-                </View>
-              )}
-              {aiPlan.alertIfTSB != null && tlCurrent.tsb < aiPlan.alertIfTSB && (
-                <View style={styles.aiAlert}>
-                  <Text style={styles.aiAlertText}>Fatica elevata (TSB {Math.round(tlCurrent.tsb)}) - valuta recupero</Text>
                 </View>
               )}
               <View style={{ flexDirection: "row", gap: 10 }}>
@@ -565,8 +586,6 @@ const styles = StyleSheet.create({
   aiWorkoutBox: { backgroundColor: "rgba(55,226,147,0.06)", borderRadius: 10, borderWidth: 1, borderColor: "rgba(55,226,147,0.15)", padding: 12, gap: 4 },
   aiWorkoutText: { color: "#37E293", fontSize: 15, fontWeight: "800" },
   aiIntensity: { color: "rgba(55,226,147,0.6)", fontSize: 12, fontWeight: "600" },
-  aiAlert: { backgroundColor: "rgba(255,149,0,0.08)", borderRadius: 8, borderWidth: 1, borderColor: "rgba(255,149,0,0.25)", padding: 10 },
-  aiAlertText: { color: "#FF9500", fontSize: 12, fontWeight: "600" },
   aiCoachBtn: { paddingHorizontal: 16, paddingVertical: 14, borderRadius: 12, borderWidth: 1, borderColor: "rgba(55,226,147,0.25)", justifyContent: "center" },
   aiCoachBtnText: { color: "#37E293", fontWeight: "800", fontSize: 14 },
 });

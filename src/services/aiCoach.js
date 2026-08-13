@@ -549,8 +549,7 @@ export function buildPrompt(athleteData) {
     + '      "coachNote": "motivazione fisiologica e cue tecnici"\n'
     + "    }\n"
     + "  ],\n"
-    + '  "weeklyAdvice": "consiglio su recupero, sonno, nutrizione o focus mentale coerente con la fase",\n'
-    + '  "alertIfTSB": null\n'
+    + '  "weeklyAdvice": "consiglio su recupero, sonno, nutrizione o focus mentale coerente con la fase"\n'
     + "}\n\n"
     + "REGOLE FINALI:\n"
     + "- Per sedute boxe compila workout (round/rest/rounds); per corsa/forza/condizionamento/recupero compila durationMin e lascia rounds a 0.\n"
