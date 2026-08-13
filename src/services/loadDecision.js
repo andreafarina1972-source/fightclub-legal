@@ -137,11 +137,37 @@ const SLEEP_ABSOLUTE_FLOOR_HOURS = 5;
 // sé un motivo per NON progredire (a differenza di un ACWR alto, che lo è
 // — vedi Regola 4). Resta solo il tetto, per evitare di progredire mentre
 // il carico acuto sta già correndo verso la soglia di allerta.
-const TSB_IMPROVEMENT_MIN_POINTS = 3; // punti minimi di risalita per contare come "in miglioramento"
+//
+// NON TARATA su dati reali (13/08/2026). Il backtest disponibile (20 giorni,
+// CTL 1.5-6.5, 16 giorni di riposo su 20) non permette di validare i 3 punti:
+// verificata la formula esatta (TSB oggi − media TSB dei 3gg precedenti) su
+// tutti i giorni valutabili di quello storico, il massimo raggiunto è stato
+// +0.77 (durante il riposo) — MAI vicino a 3, ma quello storico non è un
+// campione valido per tarare la soglia (vedi CTL_BUILDING_BASE_THRESHOLD
+// sotto: sotto quel CTL la regola non va comunque valutata). Non abbassare
+// questa soglia sulla base di quei dati: farlo avrebbe fatto scattare
+// "progress" durante 13 giorni di riposo totale, un errore concettualmente
+// peggiore dello zero attuale. Da rivedere quando esisteranno 4+ settimane
+// di allenamento continuo con CTL sopra CTL_BUILDING_BASE_THRESHOLD*2.5 (circa
+// 25, il CTL di regime con 3 sedute/settimana da ~65 TSS).
+const TSB_IMPROVEMENT_MIN_POINTS = 3; // punti minimi di risalita per contare come "in miglioramento" — NON TARATA, vedi sopra
 const TSB_IMPROVEMENT_LOOKBACK_DAYS = 3;
 const HRV_Z_PROGRESS_MIN = -0.5;
 const ACWR_PROGRESS_MAX = 1.3;
 const PROGRESS_VOLUME_PCT = 5; // vedi nota originale: estremo inferiore del range 5-8% del brief, scelta conservativa
+
+// Pavimento CTL — corretto il 13/08/2026 (prima bozza: 10). "progress" non
+// ha senso sotto una base cronica minima: con CTL 1.5-6.5 (vedi backtest
+// 20gg) l'atleta sta letteralmente ripartendo da zero, non progredendo.
+// Sotto questa soglia l'obiettivo è la REGOLARITÀ, non l'aumento: la
+// cascata emette "maintain" con reason "building_base" invece di valutare
+// le condizioni di progressione sopra. 10 e non un valore più alto (es. 15,
+// scartato): con 3 sedute/settimana da ~65 TSS il CTL di regime si assesta
+// intorno a 25-30 (τ=42gg, vedi trainingLoad.js) — una soglia a 15
+// terrebbe un atleta che si allena con regolarità in "building_base" per
+// quasi un mese, troppo a lungo per un messaggio che dovrebbe sparire non
+// appena la continuità è dimostrata.
+const CTL_BUILDING_BASE_THRESHOLD = 10;
 
 // Taglio peso — vincolo di sicurezza TRASVERSALE, non una regola della
 // cascata: si valuta sempre, e se il livello scelto dalla cascata sarebbe
@@ -173,6 +199,7 @@ const HEADLINE = {
   hrvTrendLowTsb: "loadDecision.headline.hrvTrendLowTsb",
   sleepDeficit: "loadDecision.headline.sleepDeficit",
   progress: "loadDecision.headline.progress",
+  buildingBase: "loadDecision.headline.buildingBase",
   maintainDefault: "loadDecision.headline.maintainDefault",
   learning: "loadDecision.headline.learning",
 };
@@ -661,24 +688,50 @@ export function computeLoadDecision({
   // ── Regola 9 — finestra di progressione, RELATIVA (vedi commento esteso
   // sopra TSB_IMPROVEMENT_MIN_POINTS) ────────────────────────────────────
   if (!result && anchorKey) {
-    const meanTsbPrev = meanTsbPreviousDays(seriesMap, anchorKey, TSB_IMPROVEMENT_LOOKBACK_DAYS);
-    const tsbImproving = tsbFinite !== null && meanTsbPrev !== null && (tsbFinite - meanTsbPrev) >= TSB_IMPROVEMENT_MIN_POINTS;
-    const hrvOk = Number.isFinite(baseline?.hrv?.zToday) && baseline.hrv.zToday > HRV_Z_PROGRESS_MIN;
-    const acwrOk = acwr !== null && acwr < ACWR_PROGRESS_MAX;
-
-    if (tsbImproving && hrvOk && acwrOk) {
+    const ctl = Number(trainingLoad?.current?.ctl);
+    if (Number.isFinite(ctl) && ctl < CTL_BUILDING_BASE_THRESHOLD) {
+      // Pavimento CTL (vedi commento esteso sopra CTL_BUILDING_BASE_THRESHOLD):
+      // sotto una base cronica minima "progress" non ha senso concettuale —
+      // non c'è nulla su cui progredire. Prende il posto dell'intera
+      // valutazione di progressione, non solo del suo esito: sotto soglia
+      // non si guardano nemmeno TSB/HRV/ACWR.
+      //
+      // Messaggio (Fase 2): deve comunicare un OBIETTIVO, non un deficit —
+      // "continua con regolarità (es. 3 sedute a settimana per 3 settimane)",
+      // mai una formulazione tipo "carico insufficiente" o "manca base".
+      // Vincolo esplicito, non solo una preferenza stilistica.
       result = {
-        level: "progress",
-        headline: HEADLINE.progress,
+        level: "maintain",
+        headline: HEADLINE.buildingBase,
         reasons: [{
-          code: "progression_window",
+          code: "building_base",
           severity: "info",
-          detail: { tsbToday: Math.round(tsbFinite), meanTsbPrev3d: Math.round(meanTsbPrev) },
+          detail: { ctl: Math.round(ctl * 10) / 10, threshold: CTL_BUILDING_BASE_THRESHOLD },
         }],
-        suggestedChange: { volumePct: PROGRESS_VOLUME_PCT, intensityPct: null },
+        suggestedChange: noChange(),
         confidence,
         flags,
       };
+    } else {
+      const meanTsbPrev = meanTsbPreviousDays(seriesMap, anchorKey, TSB_IMPROVEMENT_LOOKBACK_DAYS);
+      const tsbImproving = tsbFinite !== null && meanTsbPrev !== null && (tsbFinite - meanTsbPrev) >= TSB_IMPROVEMENT_MIN_POINTS;
+      const hrvOk = Number.isFinite(baseline?.hrv?.zToday) && baseline.hrv.zToday > HRV_Z_PROGRESS_MIN;
+      const acwrOk = acwr !== null && acwr < ACWR_PROGRESS_MAX;
+
+      if (tsbImproving && hrvOk && acwrOk) {
+        result = {
+          level: "progress",
+          headline: HEADLINE.progress,
+          reasons: [{
+            code: "progression_window",
+            severity: "info",
+            detail: { tsbToday: Math.round(tsbFinite), meanTsbPrev3d: Math.round(meanTsbPrev) },
+          }],
+          suggestedChange: { volumePct: PROGRESS_VOLUME_PCT, intensityPct: null },
+          confidence,
+          flags,
+        };
+      }
     }
   }
 
