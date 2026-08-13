@@ -10,6 +10,8 @@
 //
 // Fonte: Banister 1991, Coggan 2003, stessa matematica di Garmin/TrainingPeaks.
 
+import { localDateKey } from "./dateKey";
+
 // ─────────────────────────────────────────────────────────
 // COSTANTI
 // ─────────────────────────────────────────────────────────
@@ -89,41 +91,75 @@ export function sessionTSS(session) {
  *
  * @param {object[]} sessions  - array da HistoryContext
  * @param {number}   [days=90] - finestra temporale del grafico
+ * @param {Date}     [today=new Date()] - ancora "oggi" del calcolo. Iniettabile
+ *   per i test (backtest su dati reali, ricostruzione "come sarebbe stato il
+ *   giorno D"): senza questo parametro, chiamare la funzione da un harness di
+ *   test per un giorno storico D produceva comunque una serie che arrivava
+ *   fino alla data reale odierna (new Date() interno, non un parametro),
+ *   invalidando due backtest del motore decisionale (13/08/2026). Default
+ *   invariato: tutti i chiamanti esistenti (HomeScreen, AiCoachScreen,
+ *   TrainingLoadScreen) non passano questo argomento e si comportano
+ *   identicamente a prima.
  */
-export function computeTrainingLoad(sessions, days = 90) {
+export function computeTrainingLoad(sessions, days = 90, today = new Date()) {
   if (!Array.isArray(sessions) || sessions.length === 0) {
     return { series: [], current: { ctl: 0, atl: 0, tsb: 0, tss: 0 }, weeklyTSS: 0, lastTSS: 0 };
   }
 
-  // Mappa data ISO → TSS (somma se più sessioni lo stesso giorno)
+  // Mappa data locale → TSS (somma se più sessioni lo stesso giorno).
+  // localDateKey (dateKey.js), non raw.slice(0,10): quest'ultimo prende il
+  // giorno UTC del timestamp, che per una sessione fatta a tarda sera in un
+  // fuso avanti rispetto a UTC (es. Europe/Rome) può differire dal giorno
+  // locale reale. Stessa convenzione già usata da recoveryAggregate.js e dal
+  // check-in — una sola convenzione di data in tutta la pipeline (corretto
+  // 13/08/2026, vedi anche il fix del cursore sotto).
   const tssMap = new Map();
   for (const s of sessions) {
     const raw = s.date || s.createdAt;
     if (!raw) continue;
-    const dateKey = raw.slice(0, 10); // "YYYY-MM-DD"
+    const dateKey = localDateKey(new Date(raw));
     const tss = sessionTSS(s);
     tssMap.set(dateKey, (tssMap.get(dateKey) || 0) + tss);
   }
 
-  // Data odierna e finestra temporale estesa (CTL ha τ=42gg, serve storia più lunga)
-  const today = new Date();
+  // Copia difensiva: non mutare l'oggetto Date passato dal chiamante.
+  today = new Date(today);
   today.setHours(0, 0, 0, 0);
 
-  // Partiamo dall'inizio della storia (max 180gg indietro per inizializzare CTL)
+  // Partiamo dall'inizio della storia (max 180gg indietro per inizializzare CTL).
+  // Aritmetica per componenti di calendario (setDate), non sottrazione di
+  // millisecondi: su un intervallo che attraversa un cambio ora legale/
+  // solare, sottrarre un numero fisso di ms da una mezzanotte locale non
+  // restituisce un'altra mezzanotte locale (deriva di un'ora). Con la
+  // chiave ora basata su localDateKey (vedi sopra e sotto), questa deriva
+  // faceva terminare il ciclo un giorno prima del dovuto — perdendo
+  // esattamente la sessione più recente che questo fix doveva salvare.
+  // Scoperto e corretto nello stesso intervento (13/08/2026).
+  const daysAgo = (n) => { const d = new Date(today); d.setDate(d.getDate() - n); return d; };
   const allDates = [...tssMap.keys()].sort();
-  const firstDate = allDates.length > 0
-    ? new Date(Math.min(new Date(allDates[0]).getTime(), today.getTime() - 180 * 86400000))
-    : new Date(today.getTime() - 180 * 86400000);
+  const cap180 = daysAgo(180);
+  const earliestSessionDate = allDates.length > 0 ? new Date(`${allDates[0]}T00:00:00`) : null;
+  // Il più antico tra i due (stessa semantica di Math.min sui timestamp
+  // originali): se lo storico sessioni risale a più di 180gg fa, si parte
+  // da lì; altrimenti si usa comunque un minimo di 180gg di "riscaldamento"
+  // per l'EWMA anche con uno storico più corto.
+  const firstDate = earliestSessionDate && earliestSessionDate < cap180 ? earliestSessionDate : cap180;
 
   let ctl = 0;
   let atl = 0;
   const series = [];   // solo ultimi `days` giorni per il grafico
-  const cutoff = new Date(today.getTime() - days * 86400000);
+  const cutoff = daysAgo(days);
 
-  // Itera giorno per giorno dall'inizio al oggi
+  // Itera giorno per giorno dall'inizio al oggi. localDateKey, non
+  // cursor.toISOString().slice(0,10): quest'ultimo (UTC) non corrispondeva
+  // al giorno di calendario locale che il cursore rappresenta per fusi avanti
+  // rispetto a UTC, e la stessa chiave sbagliata veniva usata sia per
+  // salvare l'entry sia per cercare il tss in tssMap — la sessione di oggi
+  // non entrava in CTL/ATL fino al giorno successivo (bug reale in
+  // produzione su tre schermate, corretto 13/08/2026).
   const cursor = new Date(firstDate);
   while (cursor <= today) {
-    const key = cursor.toISOString().slice(0, 10);
+    const key = localDateKey(cursor);
     const tss = tssMap.get(key) || 0;
 
     // Aggiorna esponenziali
@@ -144,8 +180,8 @@ export function computeTrainingLoad(sessions, days = 90) {
     cursor.setDate(cursor.getDate() + 1);
   }
 
-  // TSS ultima settimana (somma 7gg)
-  const weekAgo = new Date(today.getTime() - 7 * 86400000).toISOString().slice(0, 10);
+  // TSS ultima settimana (somma 7gg) — stessa convenzione localDateKey.
+  const weekAgo = localDateKey(new Date(today.getTime() - 7 * 86400000));
   let weeklyTSS = 0;
   for (const [d, tss] of tssMap) {
     if (d >= weekAgo) weeklyTSS += tss;
