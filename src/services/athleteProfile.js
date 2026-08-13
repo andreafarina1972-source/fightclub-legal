@@ -70,6 +70,19 @@ export function translatePeriodizationPhase(raw) {
   return (key && t(`athleteProfile.periodizationPhases.${key}`)) || raw;
 }
 
+// Gli state di computeReadiness (sotto) sono già in inglese letterale (a
+// differenza delle costanti sopra, salvate in italiano) — stessa funzione
+// di traduzione per coerenza con le altre, non serve normKey su accenti qui
+// ma la riusiamo comunque per uniformità.
+const READINESS_STATE_KEY_MAP = buildKeyMap(
+  ["Recovery", "Risk of Overtraining", "Overreaching", "Accumulated Fatigue", "Ready", "Fresh", "High Performance"],
+  ["recovery", "riskOvertraining", "overreaching", "accumulatedFatigue", "ready", "fresh", "highPerformance"],
+);
+export function translateReadinessState(raw) {
+  const key = READINESS_STATE_KEY_MAP[normKey(raw)];
+  return (key && t(`athleteProfile.readinessStates.${key}`)) || raw;
+}
+
 const DEFAULT_PROFILE = {
   weightCategory: null,   // stringa
   yearsExperience: null,  // numero
