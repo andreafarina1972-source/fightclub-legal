@@ -2,6 +2,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { sessionDurationMin } from "../services/trainingLoad";
+import { scheduleRpeNotification, cancelRpeNotification } from "../services/rpeNotifications";
 
 const STORAGE_KEY = "fightclub_sessions_v1";
 const VO2_STORAGE_KEY = "fightclub_vo2_v1";
@@ -54,6 +55,18 @@ function normalizeSessionShape(base) {
     rpeCollectedAt: b.rpeCollectedAt ?? null, // ISO, quando l'atleta ha risposto la prima volta
     rpeDelayMin: b.rpeDelayMin ?? null,       // minuti da session.date alla risposta
     rpeEdited: b.rpeEdited ?? null,           // true se rpe è stato corretto dopo la prima risposta
+    // sRPE Fase 2 (13/08/2026) — ISO di quando la richiesta è stata
+    // MOSTRATA (notifica toccata o prompt in-app), indipendentemente dalla
+    // risposta. Serve solo a "massimo una richiesta per sessione" nel
+    // percorso in-app (RpePromptModal.js): senza, ogni apertura app
+    // riproporrebbe la stessa sessione ignorata.
+    rpePromptedAt: b.rpePromptedAt ?? null,
+    // sRPE Fase 2bis (13/08/2026) — identifier restituito da
+    // scheduleNotificationAsync, per poter cancellare ESPLICITAMENTE la
+    // notifica quando non serve più (RPE raccolto o richiesta ignorata via
+    // "Salta"): vedi setSessionRpe/markRpePrompted sotto. Nullo se non è
+    // mai stata pianificata nessuna notifica, o dopo che è stata cancellata.
+    rpeNotificationId: b.rpeNotificationId ?? null,
   };
 }
 
@@ -143,6 +156,7 @@ const HistoryContext = createContext({
   replaceSessions: async () => {},
   reload: async () => {},
   setSessionRpe: async () => {},
+  markRpePrompted: async () => {},
 });
 
 export function HistoryProvider({ children }) {
@@ -202,6 +216,40 @@ export function HistoryProvider({ children }) {
     await persistSessions(out);
   };
 
+  // sRPE Fase 2bis (13/08/2026) — salva sul record sessione l'identifier
+  // restituito da scheduleNotificationAsync, così setSessionRpe/
+  // markRpePrompted possono cancellare ESPLICITAMENTE quella notifica
+  // invece di affidarsi a un comportamento non documentato (vedi commit).
+  // Interna: nessuna schermata la chiama, solo addSession sotto, dopo che
+  // la pianificazione (asincrona, permesso incluso) è andata a buon fine.
+  //
+  // Usa la forma funzionale di setSessions invece di leggere `sessions`
+  // dalla closure: questa funzione viene invocata dentro un .then() legato
+  // al render in cui addSession è stata chiamata, cioè PRIMA che la nuova
+  // sessione entri nello stato — leggere `sessions` qui vedrebbe sempre
+  // l'array precedente e non troverebbe mai l'id (bug osservato: la
+  // cancellazione non funzionava mai perché rpeNotificationId restava
+  // sempre null). La forma funzionale riceve invece lo stato più recente
+  // a prescindere da quale render ha creato questa chiusura.
+  const attachRpeNotificationId = (sessionId, notificationId) => {
+    const id = sessionId?.toString?.();
+    if (!id) return;
+    setSessions((prev) => {
+      const idx = prev.findIndex((s) => s?.id?.toString?.() === id);
+      if (idx === -1) return prev;
+      const session = prev[idx];
+      // Se nel frattempo l'atleta ha già risposto o saltato, non ha senso
+      // agganciare un id che verrebbe subito ricancellato — e soprattutto
+      // non bisogna resuscitare un rpeNotificationId su una sessione già
+      // "chiusa".
+      if (session.rpe != null || session.rpePromptedAt != null) return prev;
+      const next = [...prev];
+      next[idx] = { ...session, rpeNotificationId: notificationId };
+      persistSessions(next);
+      return next;
+    });
+  };
+
   // ✅ prepend (più recente sopra) + id robusto
   const addSession = async (session) => {
     if (!session) return;
@@ -221,6 +269,17 @@ export function HistoryProvider({ children }) {
     const next = [s, ...sessions];
     setSessions(next);
     await persistSessions(next);
+
+    // sRPE Fase 2 (13/08/2026) — fire-and-forget, mai atteso: se le
+    // notifiche sono negate o il modulo non è disponibile, la funzione
+    // stessa degrada in silenzio (vedi rpeNotifications.js). Non deve mai
+    // rallentare né far fallire il salvataggio della sessione. L'identifier
+    // (se la notifica è stata pianificata) viene agganciato al record
+    // appena disponibile, per permettere una cancellazione esplicita più
+    // avanti (vedi attachRpeNotificationId sopra).
+    scheduleRpeNotification(s).then((notificationId) => {
+      if (notificationId) attachRpeNotificationId(s.id, notificationId);
+    });
   };
 
   // ✅ salva una misurazione VO2 max (prepend come le sessioni)
@@ -307,12 +366,54 @@ export function HistoryProvider({ children }) {
       rpeCollectedAt,
       rpeDelayMin,
       rpeEdited: isFirstResponse ? session.rpeEdited : true,
+      // sRPE Fase 2bis — l'RPE è raccolto, la notifica (se pianificata) non
+      // serve più: cancellata esplicitamente sotto, poi l'id viene tolto dal
+      // record (nulla da ricancellare in una eventuale correzione successiva).
+      rpeNotificationId: null,
     };
 
     const next = [...sessions];
     next[idx] = updated;
     setSessions(next);
     await persistSessions(next);
+
+    // Cancellazione esplicita, DOPO la persistenza: l'RPE è già salvato a
+    // prescindere dall'esito della cancellazione (fire-and-forget, silenziosa
+    // per costruzione — vedi rpeNotifications.js). Senza, la notifica
+    // arriverebbe comunque a chiedere lo sforzo di una sessione già valutata.
+    if (session.rpeNotificationId) {
+      cancelRpeNotification(session.rpeNotificationId);
+    }
+  };
+
+  // sRPE Fase 2 (13/08/2026) — segna che la richiesta è stata MOSTRATA
+  // (notifica toccata senza rispondere, o prompt in-app ignorato/saltato),
+  // senza toccare rpe. Usata da RpePromptModal.js per non riproporre la
+  // stessa sessione nel percorso in-app: "massimo una richiesta per
+  // sessione" del brief. Se la sessione ha già risposto (rpe non null),
+  // non fa nulla — non c'è bisogno di marcarla, il filtro di
+  // RpePromptModal la esclude già via rpe.
+  const markRpePrompted = async (sessionId) => {
+    const id = sessionId?.toString?.();
+    if (!id) return;
+
+    const idx = sessions.findIndex((s) => s?.id?.toString?.() === id);
+    if (idx === -1) return;
+    const session = sessions[idx];
+    if (session.rpePromptedAt != null) return;
+
+    const next = [...sessions];
+    // sRPE Fase 2bis — richiesta ignorata esplicitamente ("Salta", backdrop
+    // o tasto indietro): l'atleta ha deciso di non rispondere ora, la
+    // notifica (se pianificata) non deve comunque arrivare più tardi a
+    // chiedere lo sforzo di una sessione già rifiutata.
+    next[idx] = { ...session, rpePromptedAt: new Date().toISOString(), rpeNotificationId: null };
+    setSessions(next);
+    await persistSessions(next);
+
+    if (session.rpeNotificationId) {
+      cancelRpeNotification(session.rpeNotificationId);
+    }
   };
 
   const clearHistory = async () => {
@@ -361,6 +462,7 @@ export function HistoryProvider({ children }) {
       replaceSessions,
       reload,
       setSessionRpe,
+      markRpePrompted,
     }),
     [sessions, vo2Measurements, latestVo2]
   );

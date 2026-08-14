@@ -25,6 +25,7 @@
       "./large-heap-plugin",
       "expo-localization",
       "expo-file-system",
+      "expo-notifications",
       [
         "expo-image-picker",
         {

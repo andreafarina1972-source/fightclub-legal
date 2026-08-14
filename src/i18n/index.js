@@ -152,6 +152,14 @@ const translations = {
         readinessLabel: "Readiness",
       },
     },
+    rpe: {
+      notifTitle: "Quanto è stata impegnativa?",
+      notifBody: "Un tap per registrare lo sforzo della sessione appena conclusa.",
+      notifChannel: "Richiesta sforzo percepito",
+      question: "Quanto è stata impegnativa la sessione, nel complesso?",
+      legend: "0-1 riposo · 2-3 leggero · 4-5 moderato · 6-7 impegnativo · 8-9 molto impegnativo · 10 massimale",
+      skip: "Salta",
+    },
     bluetooth: {
       title: "Bluetooth",
       subtitle: "Cardiofrequenzimetro",
@@ -963,6 +971,14 @@ const translations = {
       weightCutNote: "Review your weight trajectory with a professional: no guidance here on how to speed it up.",
       readinessLabel: "Readiness",
     },
+  },
+  rpe: {
+    notifTitle: "How hard was it?",
+    notifBody: "One tap to log the effort of the session you just finished.",
+    notifChannel: "Perceived effort request",
+    question: "How hard was the session, overall?",
+    legend: "0-1 rest · 2-3 light · 4-5 moderate · 6-7 hard · 8-9 very hard · 10 maximal",
+    skip: "Skip",
   },
   bluetooth: {
     title: "Bluetooth",

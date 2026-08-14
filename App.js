@@ -18,6 +18,7 @@ import * as healthProvider from "./src/services/health/healthProvider";
 import { syncRecoveryData, getLastSyncAt } from "./src/services/health/recoveryStorage";
 
 import { HistoryProvider } from "./src/context/HistoryContext";
+import RpePromptModal from "./src/components/RpePromptModal";
 import { WorkoutProvider } from "./src/context/WorkoutContext";
 import { HeartRateProvider } from "./src/context/HeartRateContext";
 import { PunchProvider } from "./src/context/PunchContext";
@@ -117,6 +118,11 @@ function AppInner() {
               <HeartRateProvider>
                 <PunchProvider>
                   <StatusBar barStyle="light-content" backgroundColor="#050508" />
+                  {/* sRPE Fase 2 — montata una volta, sempre presente (anche
+                      prima di "ENTRA"): intercetta il cold-start via tap su
+                      notifica RPE indipendentemente dallo stato di
+                      navigazione, vedi RpePromptModal.js */}
+                  <RpePromptModal />
                   {!entered ? (
                     <AthleteCardScreen
                       onEnter={() => setEntered(true)}
