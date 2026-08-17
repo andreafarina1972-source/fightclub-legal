@@ -84,6 +84,18 @@ export default function QuickTimerScreen() {
   const roundPunchesRef = useRef(0);
   const punchesByRoundRef = useRef([]);
 
+  // fightScorePeak — picco della sessione, non lettura live al salvataggio:
+  // fightScore.total è 0 per definizione fuori dalla fase "work" (vedi
+  // sotto), e finishSession scatta esattamente quando la fase esce da
+  // "work". Un ref (non uno stato: nessun re-render, immune a closure
+  // stantia) accumula il massimo mentre la fase è attiva — vedi l'effetto
+  // dopo la definizione di fightScore. Resta null finché il round attivo
+  // non produce almeno un valore: null = "non misurato", 0 = "misurato
+  // zero", lo storico deve poterli distinguere. Azzerato in start(), non
+  // al mount: più sessioni senza uscire dallo screen non devono ereditare
+  // il picco della precedente.
+  const fightScorePeakRef = useRef(null);
+
   // 🔥 Intensità → colpi/minuto (CPM)
   const [liveIntensity, setLiveIntensity] = useState(0);
   const punchWindow = useRef([]); // ultimi 10 secondi
@@ -338,6 +350,7 @@ export default function QuickTimerScreen() {
     punchesByRoundRef.current = [];
     punchWindow.current = [];
     setLiveIntensity(0);
+    fightScorePeakRef.current = null;
 
     // ✅ inizio prima ripresa: SOLO gong
     await ensureSoundsReady();
@@ -382,7 +395,7 @@ export default function QuickTimerScreen() {
       punchesByRound: punchesByRoundRef.current,
       rounds,
       calories,
-      fightScorePeak: fightScore?.total ?? null,
+      fightScorePeak: fightScorePeakRef.current,
       hrZones: {
         hrMax: hrMaxRef.current,
         elapsed: zonesRef.current.elapsed,
@@ -451,6 +464,7 @@ export default function QuickTimerScreen() {
             avgHr: null,
             punches: snapshot.punches,
             punchesByRound: snapshot.punchesByRound,
+            fightScorePeak: fightScorePeakRef.current,
             rounds: snapshot.rounds,
             calories,
             interrupted: true,
@@ -501,6 +515,22 @@ export default function QuickTimerScreen() {
       elapsedInRound,
     });
   }, [phase, hr, hrMax, roundPunches, remaining, selected.work]);
+
+  // Aggiorna il picco SOLO durante il round attivo: fightScore.total è 0
+  // fuori round per definizione, non deve mai abbassare un massimo già
+  // raggiunto. Scrive nel ref (non useState), niente re-render.
+  useEffect(() => {
+    if (phase !== "work") return;
+    const total = fightScore?.total;
+    // > 0, non solo finito: total è 0 per definizione appena entra in round
+    // (nessun colpo/HR ancora), e 0 non è un picco misurato — è l'assenza
+    // di un picco. Catturarlo qui vorrebbe dire scrivere 0 invece di
+    // lasciare il ref a null, esattamente la distinzione richiesta.
+    if (!Number.isFinite(total) || total <= 0) return;
+    if (fightScorePeakRef.current == null || total > fightScorePeakRef.current) {
+      fightScorePeakRef.current = total;
+    }
+  }, [phase, fightScore]);
 
   // i18n-safe labels (fallback to original label if translation missing)
   const metZonesI18n = useMemo(

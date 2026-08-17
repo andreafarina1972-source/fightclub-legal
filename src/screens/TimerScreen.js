@@ -306,6 +306,16 @@ export default function TimerScreen({ route }) {
     ensureSoundsReady();
   }, [ensureSoundsReady]);
 
+  // fightScorePeak — picco della sessione, non lettura live al salvataggio:
+  // fightScore.total è 0 per definizione fuori dalla fase "round" (vedi
+  // fightScore.js), e il salvataggio scatta esattamente quando la fase
+  // esce da "round" (finished). Un ref (non uno stato: nessun re-render
+  // necessario, immune a closure stantia) accumula il massimo mentre la
+  // fase è attiva — vedi l'effetto dopo useFightScore. Resta null finché
+  // il round attivo non produce almeno un valore: null = "non misurato",
+  // 0 = "misurato zero", lo storico deve poterli distinguere.
+  const fightScorePeakRef = useRef(null);
+
   const didSaveRef = useRef(false);
   useEffect(() => {
     if (!finished) return;
@@ -339,7 +349,7 @@ export default function TimerScreen({ route }) {
       totalSeconds,
       punches: punchCount,
       punchesByRound: Array.isArray(punchesByRound) ? punchesByRound : [],
-      fightScorePeak: fightScore?.total ?? null,
+      fightScorePeak: fightScorePeakRef.current,
       rounds: config.rounds,
       cycles: config.cycles,
       avgHr: hr ?? null,
@@ -392,6 +402,10 @@ if (String(phase || "").toLowerCase() === "round" && isFirstRound && seconds <= 
     if (phase !== "idle") return;
 
     didSaveRef.current = false;
+    // ✅ nuova sessione senza uscire dallo screen: il picco non deve
+    // ereditare quello della sessione precedente. Reset qui (avvio), non
+    // al mount — vedi commento su fightScorePeakRef.
+    fightScorePeakRef.current = null;
     resetZones();
 
     await ensureSoundsReady();
@@ -465,6 +479,7 @@ if (String(phase || "").toLowerCase() === "round" && isFirstRound && seconds <= 
 
             punches: snapshot.punches,
             punchesByRound: snapshot.punchesByRound,
+            fightScorePeak: fightScorePeakRef.current,
             rounds: config.rounds,
             cycles: config.cycles,
 
@@ -507,6 +522,22 @@ if (String(phase || "").toLowerCase() === "round" && isFirstRound && seconds <= 
     roundSeconds: config.round,
     seconds,
   });
+
+  // Aggiorna il picco SOLO durante il round attivo: fightScore.total è 0
+  // fuori round per definizione, non deve mai abbassare un massimo già
+  // raggiunto. Scrive nel ref (non useState), niente re-render.
+  useEffect(() => {
+    if (String(phase || "").toLowerCase() !== "round") return;
+    const total = fightScore?.total;
+    // > 0, non solo finito: total è 0 per definizione appena entra in round
+    // (nessun colpo/HR ancora), e 0 non è un picco misurato — è l'assenza
+    // di un picco. Catturarlo qui vorrebbe dire scrivere 0 invece di
+    // lasciare il ref a null, esattamente la distinzione richiesta.
+    if (!Number.isFinite(total) || total <= 0) return;
+    if (fightScorePeakRef.current == null || total > fightScorePeakRef.current) {
+      fightScorePeakRef.current = total;
+    }
+  }, [phase, fightScore]);
 
   // ✅ i18n labels for zone legends (keeps backward-compat if labelKey is missing)
   const metZonesI18n = useMemo(
