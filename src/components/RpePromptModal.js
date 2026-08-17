@@ -1,7 +1,7 @@
 // src/components/RpePromptModal.js
 //
-// sRPE (BRIEF-srpe.md, Fase 2) — UI di raccolta, montata una volta vicino
-// alla radice dell'app (vedi App.js). Due percorsi, stessa UI:
+// sRPE (BRIEF-srpe.md, Fase 2/3) — UI di raccolta E modifica, montata una
+// volta vicino alla radice dell'app (vedi App.js). Tre percorsi, stessa UI:
 //
 //   - PRIMARIO: notifica toccata (src/services/rpeNotifications.js segnala
 //     l'id sessione) — si apre direttamente, senza passare dalla home.
@@ -11,35 +11,39 @@
 //     SOLA volta per apertura app: non riconsiderata se `sessions` cambia
 //     più tardi nella stessa sessione d'uso (altrimenti finire un nuovo
 //     allenamento riaprirebbe subito il prompt — non richiesto dal brief).
+//   - MANUALE (Fase 3): richiesta esplicita da un'altra schermata (oggi
+//     HistoryScreen.js, "Aggiungi RPE" o modifica di un valore esistente)
+//     via RpePromptContext. Ha sempre priorità sui due percorsi automatici
+//     e, a differenza loro, non applica i filtri rpe==null/finestra 24h —
+//     è un'azione esplicita dell'atleta, vale sia per aggiungere sia per
+//     correggere un valore già raccolto.
 //
 // Scala Borg CR10: un tap seleziona E invia, nessuna conferma aggiuntiva
 // ("ogni tap in più riduce il tasso di risposta", brief). Dismissione
-// (backdrop, tasto indietro Android, o "Salta") conta come "richiesta
-// mostrata e ignorata": marca rpePromptedAt, non riproposta.
+// (backdrop, tasto indietro Android, o "Salta"/"Annulla") sul percorso
+// automatico conta come "richiesta mostrata e ignorata": marca
+// rpePromptedAt, non riproposta. Sul percorso manuale è solo un annullamento
+// dell'azione dell'atleta, senza effetti collaterali.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, Pressable, StyleSheet, Modal } from "react-native";
 import { useHistoryData } from "../context/HistoryContext";
+import { useRpePrompt } from "../context/RpePromptContext";
 import { subscribeRpeNotificationResponse, getInitialRpeNotificationSessionId } from "../services/rpeNotifications";
+import { isWithinRpeWindow } from "../services/rpeWindow";
 import { t } from "../i18n";
 
-// Oltre questa finestra dalla fine sessione, il ricordo dell'intensità non
-// è più affidabile (brief): la richiesta scade, in entrambi i percorsi.
-const RPE_WINDOW_HOURS = 24;
 const RPE_VALUES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-
-function withinWindow(session) {
-  const ms = Date.parse(session?.date || "");
-  if (!Number.isFinite(ms)) return false;
-  return Date.now() - ms <= RPE_WINDOW_HOURS * 3600 * 1000;
-}
 
 export default function RpePromptModal() {
   const { sessions, setSessionRpe, markRpePrompted } = useHistoryData();
+  const { requestedId, clearRpePromptRequest } = useRpePrompt();
   const [activeId, setActiveId] = useState(null);
   const [notifChecked, setNotifChecked] = useState(false);
-  // true non appena una sessione viene proposta (notifica o scansione), per
-  // tutta la durata di questa apertura app — vedi commento in testa al file.
+  // true non appena una sessione viene proposta AUTOMATICAMENTE (notifica o
+  // scansione), per tutta la durata di questa apertura app — vedi commento
+  // in testa al file. Le richieste manuali non toccano questo flag: non
+  // sono "una proposta dell'app", sono un'azione dell'atleta.
   const shownRef = useRef(false);
 
   useEffect(() => {
@@ -75,16 +79,29 @@ export default function RpePromptModal() {
     if (shownRef.current) return;
 
     const candidates = sessions
-      .filter((s) => s?.id != null && s.rpe == null && s.rpePromptedAt == null && withinWindow(s))
+      .filter((s) => s?.id != null && s.rpe == null && s.rpePromptedAt == null && isWithinRpeWindow(s))
       .sort((a, b) => Date.parse(a.date || 0) - Date.parse(b.date || 0));
     if (candidates.length > 0) setActiveId(candidates[0].id.toString());
   }, [sessions, notifChecked]);
 
-  const activeSession = activeId
-    ? sessions.find((s) => s?.id?.toString?.() === activeId && s.rpe == null && withinWindow(s))
+  // Percorso manuale: nessun filtro rpe/finestra, nessun impatto su
+  // shownRef — vedi commento in testa al file. Ha priorità sugli altri due:
+  // se l'atleta ha appena chiesto di modificare una sessione, quello deve
+  // vedere, anche se un prompt automatico era già in coda.
+  const manualSession = requestedId
+    ? sessions.find((s) => s?.id?.toString?.() === requestedId)
     : null;
+  const autoSession =
+    !manualSession && activeId
+      ? sessions.find((s) => s?.id?.toString?.() === activeId && s.rpe == null && isWithinRpeWindow(s))
+      : null;
+  const activeSession = manualSession || autoSession;
+  const isManual = !!manualSession;
 
-  const close = useCallback(() => setActiveId(null), []);
+  const close = useCallback(() => {
+    if (manualSession) clearRpePromptRequest();
+    else setActiveId(null);
+  }, [manualSession, clearRpePromptRequest]);
 
   const handleSelect = useCallback(
     (value) => {
@@ -97,9 +114,12 @@ export default function RpePromptModal() {
 
   const handleSkip = useCallback(() => {
     if (!activeSession) return;
-    markRpePrompted(activeSession.id);
+    // Solo il percorso automatico marca "richiesta ignorata": un annullamento
+    // manuale non è una decisione dell'atleta sulla sessione, è solo la
+    // chiusura di un'azione (aggiungi/modifica) che ha cambiato idea.
+    if (!isManual) markRpePrompted(activeSession.id);
     close();
-  }, [activeSession, markRpePrompted, close]);
+  }, [activeSession, isManual, markRpePrompted, close]);
 
   if (!activeSession) return null;
 
@@ -125,7 +145,9 @@ export default function RpePromptModal() {
           </Text>
 
           <Pressable style={styles.skip} onPress={handleSkip}>
-            <Text style={styles.skipText}>{t("rpe.skip") || "Salta"}</Text>
+            <Text style={styles.skipText}>
+              {isManual ? (t("common.cancel") || "Annulla") : (t("rpe.skip") || "Salta")}
+            </Text>
           </Pressable>
         </Pressable>
       </Pressable>

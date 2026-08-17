@@ -8,6 +8,8 @@ import { t } from "../i18n";
 import CardioZonesChart from "../components/CardioZonesChart";
 import { zonesMeta, trainingZonesMeta } from "../services/hrZones";
 import { useHistoryData } from "../context/HistoryContext";
+import { useRpePrompt } from "../context/RpePromptContext";
+import { isWithinRpeWindow } from "../services/rpeWindow";
 import SessionShareCard from "../components/SessionShareCard";
 import ShareCardPreviewModal from "../components/ShareCardPreviewModal";
 import { useShareSession } from "../hooks/useShareSession";
@@ -60,6 +62,18 @@ function fmtDate(iso) {
   } catch {
     return iso || "";
   }
+}
+
+// sRPE (BRIEF-srpe.md, Fase 3) — etichetta verbale per il numero Borg CR10,
+// stesse fasce del legend mostrato in RpePromptModal.js (0-1/2-3/4-5/6-7/
+// 8-9/10). Non un numero nudo: "7 · Impegnativo", non solo "7".
+function rpeLabel(rpe) {
+  if (rpe <= 1) return t("rpe.bandRest") || "Riposo";
+  if (rpe <= 3) return t("rpe.bandLight") || "Leggero";
+  if (rpe <= 5) return t("rpe.bandModerate") || "Moderato";
+  if (rpe <= 7) return t("rpe.bandHard") || "Impegnativo";
+  if (rpe <= 9) return t("rpe.bandVeryHard") || "Molto impegnativo";
+  return t("rpe.bandMax") || "Massimale";
 }
 
 function fmtInt(n) {
@@ -405,6 +419,7 @@ function getZonesContainer(item) {
 export default function HistoryScreen({ navigation }) {
   const { isPro } = usePro();
   const ctx = useHistoryData?.() || {};
+  const { requestRpePrompt } = useRpePrompt();
   const sessions = Array.isArray(ctx.sessions) ? ctx.sessions : [];
   const vo2Measurements = Array.isArray(ctx.vo2Measurements) ? ctx.vo2Measurements : [];
 
@@ -703,6 +718,33 @@ export default function HistoryScreen({ navigation }) {
         </View>
 
         <Text style={styles.date}>{fmtDate(item?.date)}</Text>
+
+        {/* sRPE (BRIEF-srpe.md, Fase 3) — riga RPE se già raccolto (con
+            etichetta verbale, mai il numero nudo), azione "Aggiungi RPE" se
+            non ancora raccolto ma ancora nella finestra di 24h dalla fine
+            sessione. Oltre la finestra: nessuna riga — non un'invenzione a
+            posteriori di un valore che l'atleta non può più ricordare con
+            affidabilità (stesso principio del brief per rpe/durata), mai una
+            cella vuota. loadSrpe mostrato solo se non null: se la durata
+            della sessione manca, meglio ometterlo che esporre un campo senza
+            spiegazione. Tap → riapre RpePromptModal (riusata, non una
+            seconda UI) per aggiungere o correggere. */}
+        {item?.rpe != null ? (
+          <Pressable style={styles.rpeRow} onPress={() => requestRpePrompt(item.id)}>
+            <Text style={styles.rpeValue}>
+              {t("historyScreen.rpeValue", { rpe: item.rpe, label: rpeLabel(item.rpe) }) ||
+                `RPE ${item.rpe} · ${rpeLabel(item.rpe)}`}
+            </Text>
+            {item?.loadSrpe != null ? (
+              <Text style={styles.rpeLoad}>{(t("rpe.loadLabel") || "Carico sRPE") + " " + item.loadSrpe}</Text>
+            ) : null}
+            <Text style={styles.rpeEditHint}>✎</Text>
+          </Pressable>
+        ) : isWithinRpeWindow(item) ? (
+          <Pressable style={styles.rpeAddBtn} onPress={() => requestRpePrompt(item.id)}>
+            <Text style={styles.rpeAddText}>{t("rpe.addCta") || "+ Aggiungi RPE"}</Text>
+          </Pressable>
+        ) : null}
 
         {/* ✅ METRICHE: running vs boxing */}
         {isRun ? (
@@ -1114,6 +1156,30 @@ const styles = StyleSheet.create({
 
   avgHr: { color: "#aaa", marginTop: 8, fontWeight: "700" },
   roundsLine: { color: "#8aecc9", marginTop: 6, fontWeight: "700" },
+
+  rpeRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 8 },
+  rpeValue: {
+    color: "#FF9500",
+    backgroundColor: "rgba(255,149,0,0.1)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    fontWeight: "800",
+    fontSize: 13,
+  },
+  rpeLoad: { color: "#888", fontWeight: "700", fontSize: 12 },
+  rpeEditHint: { color: "#666", fontSize: 13 },
+  rpeAddBtn: {
+    alignSelf: "flex-start",
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  rpeAddText: { color: "rgba(255,255,255,0.6)", fontWeight: "700", fontSize: 12.5 },
 
   check: {
     width: 26,

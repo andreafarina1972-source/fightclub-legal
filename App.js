@@ -19,6 +19,7 @@ import { syncRecoveryData, getLastSyncAt } from "./src/services/health/recoveryS
 
 import { HistoryProvider } from "./src/context/HistoryContext";
 import RpePromptModal from "./src/components/RpePromptModal";
+import { RpePromptProvider } from "./src/context/RpePromptContext";
 import { WorkoutProvider } from "./src/context/WorkoutContext";
 import { HeartRateProvider } from "./src/context/HeartRateContext";
 import { PunchProvider } from "./src/context/PunchContext";
@@ -117,32 +118,37 @@ function AppInner() {
             <SessionProvider>
               <HeartRateProvider>
                 <PunchProvider>
-                  <StatusBar barStyle="light-content" backgroundColor="#050508" />
-                  {/* sRPE Fase 2 — montata una volta, sempre presente (anche
-                      prima di "ENTRA"): intercetta il cold-start via tap su
-                      notifica RPE indipendentemente dallo stato di
-                      navigazione, vedi RpePromptModal.js */}
-                  <RpePromptModal />
-                  {!entered ? (
-                    <AthleteCardScreen
-                      onEnter={() => setEntered(true)}
-                      onRequestPro={requestProFromCard}
-                    />
-                  ) : (
-                    <NavigationContainer
-                      ref={navigationRef}
-                      theme={FightClubTheme}
-                      key={lang}
-                      onReady={() => {
-                        if (pendingPaywallRef.current) {
-                          pendingPaywallRef.current = false;
-                          navigationRef.current?.navigate("Paywall");
-                        }
-                      }}
-                    >
-                      <AppStack />
-                    </NavigationContainer>
-                  )}
+                  <RpePromptProvider>
+                    <StatusBar barStyle="light-content" backgroundColor="#050508" />
+                    {/* sRPE Fase 2 — montata una volta, sempre presente (anche
+                        prima di "ENTRA"): intercetta il cold-start via tap su
+                        notifica RPE indipendentemente dallo stato di
+                        navigazione, vedi RpePromptModal.js. Fase 3: avvolta da
+                        RpePromptProvider così anche HistoryScreen (dentro
+                        NavigationContainer) può chiederle di aprirsi per una
+                        sessione specifica, per aggiungere/correggere l'RPE. */}
+                    <RpePromptModal />
+                    {!entered ? (
+                      <AthleteCardScreen
+                        onEnter={() => setEntered(true)}
+                        onRequestPro={requestProFromCard}
+                      />
+                    ) : (
+                      <NavigationContainer
+                        ref={navigationRef}
+                        theme={FightClubTheme}
+                        key={lang}
+                        onReady={() => {
+                          if (pendingPaywallRef.current) {
+                            pendingPaywallRef.current = false;
+                            navigationRef.current?.navigate("Paywall");
+                          }
+                        }}
+                      >
+                        <AppStack />
+                      </NavigationContainer>
+                    )}
+                  </RpePromptProvider>
                 </PunchProvider>
               </HeartRateProvider>
             </SessionProvider>
