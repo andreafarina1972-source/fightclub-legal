@@ -52,6 +52,16 @@ export function getVo2TestMinHr(age = 35) {
 // Per un test submassimale da app (HR media su 30s in esercizio aerobico)
 // usiamo HRmax stimato da Tanaka + HRrest, che è l'uso validato.
 // ------------------------------------------------------------------
+
+// Range fisiologico plausibile per un VO2max umano (BRIEF-vo2max-verifica.md,
+// Intervento B): decondizionato/sedentario verso il limite basso, atleti di
+// resistenza d'élite verso il limite alto. La formula da sola non lo garantisce
+// — età minima (5) e HRrest minima (30) ammesse altrove sono entrambe
+// individualmente plausibili ma la LORO combinazione (15.3 × 204.5/30 ≈ 104)
+// supera il limite umano: è un segnale di input scorretto, non un atleta reale.
+const VO2_PHYSIOLOGICAL_MIN = 20;
+const VO2_PHYSIOLOGICAL_MAX = 90;
+
 export function estimateVo2Max(avgHr, age = 35, hrRest = 60) {
   const hrMax = estimateHrMax(age);
   const rest  = Math.max(30, Math.min(100, Number(hrRest) || 60));
@@ -64,7 +74,8 @@ export function estimateVo2Max(avgHr, age = 35, hrRest = 60) {
 
   // Uth: 15.3 × (HRmax / HRrest)
   const vo2 = 15.3 * (hrMax / rest);
-  return Math.round(vo2 * 10) / 10;
+  const clamped = Math.max(VO2_PHYSIOLOGICAL_MIN, Math.min(VO2_PHYSIOLOGICAL_MAX, vo2));
+  return Math.round(clamped * 10) / 10;
 }
 
 // ------------------------------------------------------------------

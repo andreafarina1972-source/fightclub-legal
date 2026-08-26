@@ -23,6 +23,7 @@ import React, { forwardRef } from "react";
 import { View, Text, Image, StyleSheet } from "react-native";
 import { scoreColor, scoreLabel } from "../services/fightScore";
 import { isVideoUri } from "../services/mediaKind";
+import { useHistoryData } from "../context/HistoryContext";
 import { t } from "../i18n";
 
 // ─────────────────────────────────────────────────────────
@@ -241,6 +242,14 @@ const CARD_W = 380; // larghezza fissa per il PNG
  *                   Se assente, viene usato uno sfondo scuro con banda diagonale.
  */
 const SessionShareCard = forwardRef(function SessionShareCard({ session, backgroundUri, transparent = false }, ref) {
+  // VO2max di fondo (dal test dedicato in HomeScreen, mai ricalcolato per
+  // singola sessione): un BPM istantaneo di fine allenamento non è un input
+  // valido per la formula Uth — vedi BRIEF-vo2max-verifica.md, Intervento A.
+  // Se l'atleta non ha ancora fatto il test, latestVo2 è null e il campo VO2max
+  // non compare sulla card (i controlli isRunning && vo2 > 0 più sotto restano
+  // invariati e nascondono correttamente il campo invece di inventare un numero).
+  const { latestVo2 } = useHistoryData();
+
   if (!session) return null;
 
   const type       = sessionType(session);
@@ -250,7 +259,7 @@ const SessionShareCard = forwardRef(function SessionShareCard({ session, backgro
   const avgHr      = safeNum(session?.avgHr);
   const peakHr     = safeNum(session?.hrMax);
   const calories   = safeNum(session?.calories);
-  const vo2        = safeNum(session?.vo2MaxEstimate || session?.latestVo2 || 0);
+  const vo2        = safeNum(latestVo2?.value);
   const fs         = safeNum(session?.fightScorePeak);
   const distKm     = safeNum(session?.distanceM) / 1000;
   const avgPaceSec = safeNum(session?.avgPaceSecPerKm);
