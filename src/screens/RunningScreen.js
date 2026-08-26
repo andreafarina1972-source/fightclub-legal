@@ -758,13 +758,16 @@ export default function RunningScreen() {
             <View style={styles.mapWrap}>
               <WebView
                 ref={webRef}
-                originWhitelist={["*"]}
+                // Solo http/https (default della libreria): la pagina Leaflet non
+                // naviga mai altrove, non serve allargare l'whitelist a "*". Niente
+                // allowFileAccessFromFileURLs/allowUniversalAccessFromFileURLs (accesso
+                // a file locali non necessario, l'HTML è inline) né mixedContentMode
+                // "always" (tutte le risorse — cdn.jsdelivr.net, tile.openstreetmap.org
+                // — sono già https). Riduce la superficie di attacco se lo script
+                // Leaflet caricato da CDN fosse mai compromesso (nessun SRI sul tag).
                 source={{ html: LEAFLET_HTML }}
-                allowFileAccessFromFileURLs
-                allowUniversalAccessFromFileURLs
                 javaScriptEnabled
                 domStorageEnabled
-                mixedContentMode="always"
                 onLoadEnd={() => {
                   webReadyRef.current = true;
                   const last = lastPointRef.current;

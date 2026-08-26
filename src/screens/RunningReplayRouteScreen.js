@@ -136,11 +136,12 @@ export default function RunningReplayRouteScreen({ route }) {
       <View style={styles.mapWrap}>
         <WebView
           ref={webRef}
-          originWhitelist={["*"]}
+          // Whitelist http/https di default (nessun originWhitelist="*") e nessun
+          // mixedContentMode "always": stessa scelta di RunningScreen.js, vedi
+          // commento li' per il motivo (nessuna risorsa http non-sicura da caricare).
           source={ { html: LEAFLET_HTML } }
           javaScriptEnabled
           domStorageEnabled
-          mixedContentMode="always"
           onLoadEnd={onMapReady}
         />
       </View>

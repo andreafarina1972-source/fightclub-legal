@@ -22,28 +22,73 @@ const LANG_LABELS = {
   vi: "vietnamita", id: "indonesiano", ms: "malese", sw: "swahili", nl: "olandese",
 };
 
+// Glossario completo dei codici motivo/flag di services/loadDecision.js.
+// buildPrompt() ne invia al modello SOLO le voci i cui `codes` compaiono
+// davvero in reasonCodes/flags di QUESTA chiamata (vedi glossaryText sotto),
+// non l'elenco intero: erano ~230 token fissi spediti ad ogni generazione
+// anche quando la decisione di quella settimana citava 1-2 codici su 13,
+// una delle cause del 413 "tokens per minute" sul tier free di Groq
+// (25/08/2026, Limit 8000, Requested 8414).
+const GLOSSARY_ENTRIES = [
+  { codes: ["hrv_depressed_resting_hr_elevated"], text: "possibile malessere incipiente (pattern di recupero nervoso basso e frequenza cardiaca a riposo elevata)" },
+  { codes: ["acute_hrv_sleep_fatigue_crash"], text: "crollo acuto di recupero (indicatori nervosi, sonno e fatica)" },
+  { codes: ["taper_active"], text: "settimana di scarico pre-gara" },
+  { codes: ["acwr_elevated", "acwr_still_rising"], text: "carico acuto salito rapidamente (o ancora in salita) rispetto al cronico" },
+  { codes: ["tsb_very_low"], text: "forma molto negativa, debito di recupero elevato" },
+  { codes: ["recent_sparring"], text: "sparring pesante nelle ultime 48 ore" },
+  { codes: ["hrv_trend_down_tsb_low"], text: "recupero in calo e forma in debito moderato" },
+  { codes: ["sleep_below_personal_baseline"], text: "sonno recente sotto la media personale dell'atleta" },
+  { codes: ["building_base"], text: "base cronica ancora insufficiente, priorita' alla continuita' non all'aumento" },
+  { codes: ["progression_window"], text: "finestra favorevole alla progressione" },
+  { codes: ["default_maintain"], text: "nessun segnale particolare" },
+  { codes: ["insufficient_baseline_data"], text: "dati ancora insufficienti per una decisione affidabile" },
+  { codes: ["aggressive_weight_cut_blocks_progress"], text: "calo peso aggressivo rilevato, progressione sospesa — se presente NON dare mai, in nessuna parte del piano, indicazioni su come accelerare un calo peso" },
+];
+
+function buildGlossaryText(activeCodes) {
+  const active = new Set(activeCodes);
+  const lines = GLOSSARY_ENTRIES
+    .filter((entry) => entry.codes.some((c) => active.has(c)))
+    .map((entry) => "- " + entry.codes.join(" / ") + ": " + entry.text);
+  if (!lines.length) return "(nessun codice specifico in questa decisione)\n\n";
+  return lines.join("\n") + "\n\n";
+}
+
 // ─────────────────────────────────────────────────────────
 // PROVIDER DISPONIBILI
 // ─────────────────────────────────────────────────────────
 
+// ID modello per provider, dichiarati qui vicino ad AI_PROVIDERS (usati poco
+// sotto in generateAiPlan) invece che come stringhe letterali nella chiamata
+// fetch: i nomi dei modelli sono volatili — llama-3.3-70b-versatile è stato
+// deprecato il 17/06/2026 (visto in produzione come 404, non solo su carta),
+// gemini-2.0-flash è stato ritirato l'1/06/2026, e claude-sonnet-4-20250514
+// era già deprecato con scadenza 15/06/2026 (oggi 25/08/2026, quindi già
+// oltre). Nessuno dei tre era mai stato verificato da quando il provider è
+// stato aggiunto: questo si ripeterà, motivo in più per tenerli in un posto
+// solo. VERIFICATO 25/08/2026 — ricontrollare periodicamente.
+const GROQ_MODEL = "openai/gpt-oss-120b"; // sostituto raccomandato da Groq per llama-3.3-70b-versatile
+const GEMINI_MODEL = "gemini-2.5-flash"; // sostituto raccomandato da Google per gemini-2.0-flash
+const ANTHROPIC_MODEL = "claude-sonnet-5"; // sostituto raccomandato da Anthropic per claude-sonnet-4-20250514
+
 export const AI_PROVIDERS = {
   groq: {
     name: "Groq (Gratuito)",
-    label: "Llama 3.3 70B",
+    label: "GPT-OSS 120B",
     hint: "Gratuito, no carta. Registrati su console.groq.com",
     url: "https://console.groq.com",
     keyPrefix: "gsk_",
   },
   gemini: {
     name: "Gemini (Gratuito)",
-    label: "Gemini 2.0 Flash",
+    label: "Gemini 2.5 Flash",
     hint: "Gratuito, no carta. Registrati su aistudio.google.com",
     url: "https://aistudio.google.com",
     keyPrefix: "AIza",
   },
   anthropic: {
     name: "Anthropic Claude",
-    label: "Claude Sonnet 4",
+    label: "Claude Sonnet 5",
     hint: "Richiede crediti ($5 min). Registrati su console.anthropic.com",
     url: "https://console.anthropic.com",
     keyPrefix: "sk-ant-",
@@ -430,6 +475,22 @@ export function buildPrompt(athleteData) {
   const goalText = (goal || (profile && profile.goal)) ? "\nOBIETTIVO: " + (goal || profile.goal) : "";
   const langLabel = LANG_LABELS[lang] || "inglese";
 
+  // Solo la descrizione volume del livello dell'atleta corrente, non tutte
+  // e tre (principiante/intermedio/avanzato insieme): le altre due non si
+  // applicano mai a questa chiamata, sono token di input puro sprecati ad
+  // ogni singola generazione. Risparmio reale, non un taglio di qualita':
+  // trovato dopo un 413 "tokens per minute" sul tier free di Groq (25/08/2026,
+  // Limit 8000, Requested 8414 — vedi anche GLOSSARIO_MOTIVI sotto, stesso
+  // principio applicato li).
+  const VOLUME_BY_LEVEL = {
+    principiante: "- principiante: 3-4 sedute/settimana. Prevalenza tecnica boxe (3-4 round da 2-3 min), 1 corsa aerobica leggera, 1 sessione forza generale con core stability di base. Introdurre gradualmente.\n",
+    intermedio: "- intermedio: 4-5 sedute/settimana. 2-3 sedute boxe (5-7 round da 3 min di cui una tecnica e una piu' intensa), 1-2 corse (1 fondo + 1 ripetute), 1-2 sedute forza/potenza con core stability e core forza.\n",
+    avanzato: "- avanzato: livello agonistico/competitivo che si prepara a incontri. 5-6 sedute/settimana con possibili doppie sessioni. Programma COMPLETO: "
+      + "3-4 sedute boxe (8-12 round da 3 min: tecnica, sacco/pao, sparring), 2 corse (1 fondo lungo Z2, 1 ripetute/interval ad alta intensita'), "
+      + "2 sedute forza e potenza (forza massimale + pliometria/potenza del colpo), core stability in OGNI seduta di forza (2-3 esercizi anti-movimento) piu' core forza e collo, 1 recupero attivo. "
+      + "Reale variazione di intensita' tra le sedute (polarizzato).\n",
+  };
+
   const volumeRules =
     "STRUTTURA SETTIMANALE COMPLETA (obbligatoria): un programma da atleta NON e' solo round di boxe. "
     + "Deve integrare preparazione tecnica, atletica e fisica specifica. Distribuisci nella settimana queste componenti:\n"
@@ -440,19 +501,20 @@ export function buildPrompt(athleteData) {
     + "  E) CORE STABILITY: anti-rotazione, anti-estensione, anti-flessione laterale, bracing (Pallof, dead bug, carry, plank). Trasferisce la potenza da gambe a colpo e protegge la colonna.\n"
     + "  F) CORE FORZA/RESISTENZA e COLLO: forza e resistenza addominale, rotazione, estensori, lavoro di collo e mobilita' articolare per prevenzione infortuni.\n"
     + "  G) RECUPERO: recupero attivo, stretching, rigenerazione.\n\n"
-    + "VOLUME PER LIVELLO (obbligatorio, non usare valori fissi):\n"
-    + "- principiante: 3-4 sedute/settimana. Prevalenza tecnica boxe (3-4 round da 2-3 min), 1 corsa aerobica leggera, 1 sessione forza generale con core stability di base. Introdurre gradualmente.\n"
-    + "- intermedio: 4-5 sedute/settimana. 2-3 sedute boxe (5-7 round da 3 min di cui una tecnica e una piu' intensa), 1-2 corse (1 fondo + 1 ripetute), 1-2 sedute forza/potenza con core stability e core forza.\n"
-    + "- avanzato: livello agonistico/competitivo che si prepara a incontri. 5-6 sedute/settimana con possibili doppie sessioni. Programma COMPLETO: "
-    + "3-4 sedute boxe (8-12 round da 3 min: tecnica, sacco/pao, sparring), 2 corse (1 fondo lungo Z2, 1 ripetute/interval ad alta intensita'), "
-    + "2 sedute forza e potenza (forza massimale + pliometria/potenza del colpo), core stability in OGNI seduta di forza (2-3 esercizi anti-movimento) piu' core forza e collo, 1 recupero attivo. "
-    + "Reale variazione di intensita' tra le sedute (polarizzato).\n"
+    + "VOLUME PER LIVELLO " + volumeLevel + " (obbligatorio, non usare valori fissi):\n"
+    + VOLUME_BY_LEVEL[volumeLevel]
     + "Per le sedute di boxe usa il campo workout.rounds coerente col livello " + volumeLevel + ". "
     + "Per corsa/forza/condizionamento/recupero usa durationMin (durata in minuti) e descrivi il contenuto nei drills. "
     + "NON generare un programma di sola boxe: deve essere una preparazione atletica completa adeguata al livello " + volumeLevel + ".";
 
   // Menu esercizi reali filtrato per livello (libreria)
   const exerciseMenu = buildExerciseMenu(volumeLevel);
+
+  // Solo i codici davvero citati in questa decisione (vedi buildGlossaryText
+  // sopra): reasonCodes + flags, mai il glossario completo.
+  const glossaryText = safeLoadDecision
+    ? buildGlossaryText([...safeLoadDecision.reasonCodes, ...safeLoadDecision.flags])
+    : "";
 
   // ── Blocco "rispetta, non rivalutare" + glossario motivi (Fase 3) ──────
   // Presente nel system prompt SOLO se safeLoadDecision esiste: stessa
@@ -468,20 +530,8 @@ export function buildPrompt(athleteData) {
       + "   - livello \"progress\": puoi aumentare leggermente volume e/o intensita', coerente con la variazione indicata se presente.\n"
       + "   - livello \"maintain\" con motivo building_base: mantieni il carico della settimana precedente SENZA aumenti — l'obiettivo e' la continuita' (costanza nelle sedute), non l'intensificazione. Comunicalo nel coachNote come un obiettivo positivo, mai come un limite o un deficit.\n"
       + "   - livello \"maintain\" (altri motivi) o \"learning\": nessun aumento di carico rispetto alla settimana normale per il livello dell'atleta.\n\n"
-      + "GLOSSARIO_MOTIVI (i codici elencati in DECISIONE CARICO, per interpretarli senza tradurli):\n"
-      + "- hrv_depressed_resting_hr_elevated: possibile malessere incipiente (pattern di recupero nervoso basso e frequenza cardiaca a riposo elevata)\n"
-      + "- acute_hrv_sleep_fatigue_crash: crollo acuto di recupero (indicatori nervosi, sonno e fatica)\n"
-      + "- taper_active: settimana di scarico pre-gara\n"
-      + "- acwr_elevated / acwr_still_rising: carico acuto salito rapidamente (o ancora in salita) rispetto al cronico\n"
-      + "- tsb_very_low: forma molto negativa, debito di recupero elevato\n"
-      + "- recent_sparring: sparring pesante nelle ultime 48 ore\n"
-      + "- hrv_trend_down_tsb_low: recupero in calo e forma in debito moderato\n"
-      + "- sleep_below_personal_baseline: sonno recente sotto la media personale dell'atleta\n"
-      + "- building_base: base cronica ancora insufficiente, priorita' alla continuita' non all'aumento\n"
-      + "- progression_window: finestra favorevole alla progressione\n"
-      + "- default_maintain: nessun segnale particolare\n"
-      + "- insufficient_baseline_data: dati ancora insufficienti per una decisione affidabile\n"
-      + "- aggressive_weight_cut_blocks_progress: calo peso aggressivo rilevato, progressione sospesa — se presente NON dare mai, in nessuna parte del piano, indicazioni su come accelerare un calo peso\n\n"
+      + "GLOSSARIO_MOTIVI (solo i codici presenti in questa DECISIONE CARICO, per interpretarli senza tradurli):\n"
+      + glossaryText
     : "";
 
   // ── SYSTEM PROMPT professionale ────────────────────────
@@ -575,7 +625,7 @@ export function buildPrompt(athleteData) {
 // ─────────────────────────────────────────────────────────
 
 const PROVIDER_NAME_KEYS = { groq: "groqName", gemini: "geminiName", anthropic: "anthropicName" };
-function providerDisplayName(provider) {
+export function providerDisplayName(provider) {
   const k = PROVIDER_NAME_KEYS[provider];
   return (k && t("aiCoach." + k)) || AI_PROVIDERS[provider]?.name || provider;
 }
@@ -626,8 +676,24 @@ export async function generateAiPlan(athleteData, onProgress) {
           "Authorization": "Bearer " + apiKey,
         },
         body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          max_tokens: 4000,
+          model: GROQ_MODEL,
+          // 3500 non 4000: il tier free di Groq applica un limite di 8000
+          // token/minuto (input+output) per richiesta su questo modello —
+          // vedi il taglio dei contenuti fissi del prompt sopra (VOLUME_BY_LEVEL,
+          // GLOSSARIO_MOTIVI filtrato). Margine di sicurezza contro la
+          // variabilita' naturale dell'input (esercizi settimana precedente,
+          // profilo atleta), non solo contro il valore misurato una volta.
+          max_tokens: 3500,
+          // gpt-oss-120b e' un modello "reasoning": genera token di ragionamento
+          // interno PRIMA della risposta finale, e quei token attingono allo
+          // stesso budget di max_tokens del JSON che ci serve. Senza questo
+          // parametro (default Groq per gpt-oss e' un ragionamento sostanzioso)
+          // il modello puo' esaurire l'intero budget ragionando e restituire
+          // choices[0].message.content vuoto — visto in produzione come "Risposta
+          // vuota dal modello" (26/08/2026), non un caso isolato: il nostro
+          // prompt e' gia' prescrittivo (regole di volume, glossario, schema
+          // JSON), non serve un ragionamento profondo per applicarle.
+          reasoning_effort: "low",
           temperature: 0.7,
           messages: [
             { role: "system", content: systemPrompt },
@@ -637,17 +703,22 @@ export async function generateAiPlan(athleteData, onProgress) {
       });
       if (!response.ok) {
         const err = await response.text();
+        // Dettaglio tecnico (JSON grezzo dell'errore) solo in console: un
+        // tester che vede il payload troncato a metà non sa cosa farne.
+        console.log("aiCoach Groq error " + response.status + ":", err);
         if (response.status === 401) throw new Error("Chiave Groq non valida. Verifica su console.groq.com");
         if (response.status === 429) throw new Error("Limite Groq raggiunto (1000 req/giorno). Riprova domani.");
-        throw new Error("Errore Groq " + response.status + ": " + err.slice(0, 150));
+        throw new Error(
+          t("aiCoach.providerRequestError", { provider: "Groq", status: response.status }) ||
+          "Errore nella richiesta a Groq (codice " + response.status + "). Riprova tra qualche minuto."
+        );
       }
       const data = await response.json();
       responseText = data?.choices?.[0]?.message?.content || "";
 
     // ── GEMINI ───────────────────────────────────────────
     } else if (provider === "gemini") {
-      const model = "gemini-2.0-flash";
-      const url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + apiKey;
+      const url = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent?key=" + apiKey;
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -659,9 +730,13 @@ export async function generateAiPlan(athleteData, onProgress) {
       });
       if (!response.ok) {
         const err = await response.text();
+        console.log("aiCoach Gemini error " + response.status + ":", err);
         if (response.status === 400) throw new Error("Chiave Gemini non valida. Verifica su aistudio.google.com");
         if (response.status === 429) throw new Error("Limite Gemini raggiunto. Riprova tra qualche minuto.");
-        throw new Error("Errore Gemini " + response.status + ": " + err.slice(0, 150));
+        throw new Error(
+          t("aiCoach.providerRequestError", { provider: "Gemini", status: response.status }) ||
+          "Errore nella richiesta a Gemini (codice " + response.status + "). Riprova tra qualche minuto."
+        );
       }
       const data = await response.json();
       responseText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
@@ -677,7 +752,7 @@ export async function generateAiPlan(athleteData, onProgress) {
           "anthropic-dangerous-direct-browser-access": "true",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
+          model: ANTHROPIC_MODEL,
           max_tokens: 4000,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
@@ -685,9 +760,13 @@ export async function generateAiPlan(athleteData, onProgress) {
       });
       if (!response.ok) {
         const err = await response.text();
+        console.log("aiCoach Anthropic error " + response.status + ":", err);
         if (response.status === 401) throw new Error("Chiave Anthropic non valida.");
         if (response.status === 400 && err.includes("credit")) throw new Error("Crediti Anthropic esauriti. Ricarica su console.anthropic.com (min $5).");
-        throw new Error("Errore Anthropic " + response.status + ": " + err.slice(0, 150));
+        throw new Error(
+          t("aiCoach.providerRequestError", { provider: "Anthropic", status: response.status }) ||
+          "Errore nella richiesta ad Anthropic (codice " + response.status + "). Riprova tra qualche minuto."
+        );
       }
       const data = await response.json();
       responseText = data?.content?.[0]?.text || "";

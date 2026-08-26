@@ -16,6 +16,7 @@ import {
   generateAiPlan, loadAiPlan, saveCheckIn, loadCheckIns,
   isPlanCurrentWeek, getTodaySession, formatWorkoutParams,
   translateDayLabel, translateEnergySystemLabel,
+  loadProvider, providerDisplayName,
 } from "../services/aiCoach";
 import { getAppLang } from "../services/voiceCoach";
 import {
@@ -270,6 +271,12 @@ export default function AiCoachScreen({ navigation }) {
   const [showCheckin, setShowCheckin] = useState(false);
   const [goal,       setGoal]       = useState(null);
   const [athleteProfile, setAthleteProfile] = useState(null);
+  // Badge provider (Fase successiva sRPE-adiacente, 25/08/2026): dinamico,
+  // mai il nome statico "Claude AI" sbagliato per chi usa Groq/Gemini. Resta
+  // null finché loadProvider() non risolve — vedi il render del badge più
+  // sotto, che mostra un'etichetta neutra in quella finestra invece di
+  // indovinare un provider potenzialmente sbagliato.
+  const [providerBadge, setProviderBadge] = useState(null);
 
   // Un'unica chiamata all'hook: alimenta sia LoadDecisionCard sia
   // handleCheckInDone/doGenerate (Fase 3) — nessun ricalcolo, vincolo
@@ -280,6 +287,7 @@ export default function AiCoachScreen({ navigation }) {
   useEffect(() => {
     loadAiPlan().then(p => { if (p) setPlan(p); });
     loadAthleteProfile().then(setAthleteProfile);
+    loadProvider().then(p => setProviderBadge(providerDisplayName(p)));
   }, []);
 
   // Calcola dati atleta per il prompt
@@ -339,6 +347,9 @@ export default function AiCoachScreen({ navigation }) {
     try {
       const newPlan = await generateAiPlan(data, setProgress);
       setPlan(newPlan);
+      // Il provider può essere cambiato durante la generazione (rilevato
+      // dal prefisso della chiave, vedi generateAiPlan): riallinea il badge.
+      loadProvider().then(p => setProviderBadge(providerDisplayName(p)));
     } catch (e) {
       Alert.alert(t("common.error") || "Errore", e?.message || t("aiCoach.generateError") || "Impossibile generare il piano. Controlla la connessione.");
     } finally {
@@ -378,7 +389,9 @@ export default function AiCoachScreen({ navigation }) {
             <Text style={styles.sub}>{t("aiCoach.subtitle") || "Piano adattivo personalizzato"}</Text>
           </View>
           <View style={styles.aiBadge}>
-            <Text style={styles.aiBadgeText}>{t("aiCoach.badgeAi") || "✦ Claude AI"}</Text>
+            <Text style={styles.aiBadgeText}>
+              {providerBadge ? "✦ " + providerBadge : (t("aiCoach.badgeNeutral") || "✦ AI Coach")}
+            </Text>
           </View>
         </View>
 
