@@ -260,7 +260,7 @@ def build():
     story.append(Spacer(1, 4))
 
     tab_screens = [
-        ('Home',         'Dashboard con prossimo allenamento AI, ultima sessione, VO2max stimato, stato HR e pulsanti rapidi'),
+        ('Home',         'Dashboard con Decisione sul Carico del giorno, prossimo allenamento AI, ultima sessione, VO2max stimato, stato HR e pulsanti rapidi'),
         ('Timer',        'Timer boxe completo con Fight Score live, rilevamento colpi, zone cardio e feedback AI'),
         ('Veloce',       'Timer rapido senza configurazione — seleziona preset round/riposo e premi START'),
         ('Workout',      'Libreria workout salvati: avvia, crea o elimina allenamenti personalizzati'),
@@ -305,7 +305,6 @@ def build():
         ('Bluetooth',           'Impostazioni',      'Scansiona e accoppia fasce cardiache BLE (Polar, Garmin, Wahoo, Suunto…)'),
         ('Microfono',           'Impostazioni',      'Testa il rilevamento colpi via microfono con slider di sensibilità'),
         ('Calibrazione colpi',  'Impostazioni',      'Calibra l\'algoritmo di rilevamento colpi registrando campioni audio guidati'),
-        ('VO2 Test',            'Impostazioni',      'Misura il VO2max tramite test progressivo integrato o Cooper test (12 min)'),
     ]
 
     modal_data = [[
@@ -614,9 +613,9 @@ def build():
     story.append(t)
     story.append(Spacer(1, 8))
     for t in [
-        '<b>Groq</b> (Llama 3.3 70B) — GRATUITO, nessuna carta di credito richiesta',
-        '<b>Gemini 2.0 Flash</b> — GRATUITO, nessuna carta di credito richiesta',
-        '<b>Anthropic Claude Sonnet</b> — richiede credito prepagato (pay-per-use)',
+        '<b>Groq</b> (GPT-OSS 120B) — GRATUITO, nessuna carta di credito richiesta',
+        '<b>Gemini 2.5 Flash</b> — GRATUITO, nessuna carta di credito richiesta',
+        '<b>Anthropic Claude Sonnet 5</b> — richiede credito prepagato (pay-per-use)',
     ]:
         story.append(bullet(t))
 
@@ -646,8 +645,21 @@ def build():
 
     story.append(h2('Lingua'))
     story.append(body(
-        'Il piano viene generato nella lingua attiva dell\'app '
-        '(italiano, inglese, spagnolo, francese, tedesco).'
+        'Il piano viene generato nella lingua attiva dell\'app, tra le oltre 25 supportate '
+        '(vedi sezione Impostazioni).'
+    ))
+
+    story.append(h2('Rispetto della decisione sul carico'))
+    story.append(body(
+        'Prima di generare il piano, l\'AI Coach legge la <b>Decisione sul Carico</b> del giorno '
+        '(vedi sezione Training Load) e la rispetta senza rivalutarla: se il motore indica '
+        '<i>Riposo</i> o <i>Riduci carico</i>, il piano non propone sessioni intense anche se i tuoi '
+        'dati storici lo permetterebbero.'
+    ))
+    story.append(nota(
+        'Barriera privacy: l\'IA riceve solo l\'esito della decisione (livello e motivi in codice, es. '
+        '"sonno sotto la tua media"), mai i valori grezzi di HRV, frequenza cardiaca a riposo o sonno che '
+        'l\'hanno generata — anche quando questi dati arrivano da Health Connect (vedi sezione Impostazioni).'
     ))
     story.append(PageBreak())
 
@@ -699,6 +711,29 @@ def build():
     story.append(body(
         'La schermata Training Load mostra il grafico SVG di CTL, ATL e TSB '
         'con intervalli selezionabili: 28, 90 e 180 giorni.'
+    ))
+
+    story.append(h2('Decisione sul Carico'))
+    story.append(body(
+        'In cima alla Home, una card mostra la <b>Decisione sul Carico</b> del giorno: un motore '
+        'deterministico (non l\'IA) che combina TSB, ACWR (rapporto tra carico acuto e cronico), sonno, '
+        'sparring recente e — se colleghi Health Connect — HRV e frequenza cardiaca a riposo, per '
+        'consigliarti se aumentare, mantenere o ridurre il carico oggi. La card mostra un titolo '
+        '(es. "Oggi: riduci il carico"), un punteggio di readiness 0–100 e una breve spiegazione.'
+    ))
+    story.append(Spacer(1, 6))
+    for t in [
+        '<b>Aumenta</b> — forma e recupero positivi, finestra favorevole per progredire',
+        '<b>Mantieni</b> — nessun segnale particolare, o stai ricostruendo la base: punta sulla continuità',
+        '<b>Riduci</b> — carico acuto salito rapidamente o forma in debito',
+        '<b>Riposo</b> — sparring pesante nelle ultime 48h o segnali di affaticamento marcato',
+        '<b>Sto ancora imparando i tuoi ritmi</b> — servono più giorni di dati per un consiglio affidabile',
+    ]:
+        story.append(bullet(t))
+    story.append(nota(
+        'Nei primi giorni di utilizzo, o senza abbastanza sessioni registrate, il motore resta '
+        'volutamente prudente: preferisce dichiarare di non sapere ancora abbastanza piuttosto che '
+        'dare un consiglio non affidabile.'
     ))
     story.append(PageBreak())
 
@@ -858,6 +893,23 @@ def build():
     ]))
     story.append(t2)
 
+    story.append(h2('Sforzo Percepito (sRPE)'))
+    story.append(body(
+        'Dopo ogni sessione, l\'app chiede quanto è stata impegnativa nel complesso, su una scala '
+        '0–10 (0–1 riposo, 2–3 leggero, 4–5 moderato, 6–7 impegnativo, 8–9 molto impegnativo, 10 massimale). '
+        'La richiesta può arrivare come notifica differita di qualche minuto (per non interromperti subito '
+        'dopo l\'allenamento) oppure come domanda in-app se le notifiche non sono disponibili. Puoi sempre '
+        'saltarla, o aggiungere/correggere la valutazione in un secondo momento dalla card della sessione '
+        'nello Storico con <b>+ Aggiungi RPE</b>.'
+    ))
+    story.append(Spacer(1, 6))
+    story.append(body(
+        'Il valore inserito genera il <b>Carico sRPE</b> della sessione (RPE × durata in minuti), mostrato '
+        'nella card insieme all\'etichetta di intensità (es. "RPE 9 · Molto impegnativo"). È una misura '
+        'del carico interno percepito, complementare al TSS calcolato da durata e zone cardio: utile '
+        'soprattutto nelle sessioni senza fascia cardio, dove il TSS da solo è solo una stima.'
+    ))
+
     story.append(PageBreak())
 
     # ── 10. CONDIVISIONE ─────────────────────────────────────────────────────
@@ -956,6 +1008,28 @@ def build():
              'e accoppiare la tua fascia cardio.'),
     ]
     story.append(with_ss(imp_api, '21-50-52-32', img_width=5*cm))
+
+    story.append(h2('Dati Salute (Health Connect)'))
+    story.append(body(
+        'Collega Health Connect per includere il tuo recupero reale — sonno, HRV, frequenza cardiaca '
+        'a riposo — nel punteggio di readiness e nella Decisione sul Carico (vedi sezione Training Load). '
+        'Se il dispositivo non lo supporta, la sezione mostra "Non disponibile su questo dispositivo".'
+    ))
+    story.append(Spacer(1, 6))
+    for t in [
+        '<b>Letti</b> — HRV, frequenza cardiaca a riposo, sonno, peso corporeo',
+        '<b>Non letti</b> — le sessioni di allenamento: l\'app le registra già direttamente',
+        '<b>Importa storico</b> — importa gli ultimi 30 giorni per avere subito una baseline di recupero '
+        'attendibile, invece di aspettare settimane di sincronizzazioni quotidiane',
+        '<b>Scollega</b> — elimina dal dispositivo i dati di recupero già importati; puoi ricollegare '
+        'in qualsiasi momento',
+    ]:
+        story.append(bullet(t))
+    story.append(nota(
+        'I dati di salute restano sempre sul dispositivo: non lasciano mai il telefono, non vengono '
+        'inviati a nessun server — nemmeno all\'AI Coach, che riceve solo l\'esito già elaborato '
+        '(vedi sezione AI Coach, "Rispetto della decisione sul carico").'
+    ))
 
     story.append(PageBreak())
 
