@@ -30,7 +30,7 @@ import { estimateCaloriesFromSession } from "../services/vo2Utils";
 // ✅ i18n
 import { t } from "../i18n";
 
-import { connectHeartRate, subscribeHeartRate } from "../services/heartRateService";
+import { connectHeartRate, subscribeHeartRate, subscribeHrStatus } from "../services/heartRateService";
 
 import CardioZonesChart from "../components/CardioZonesChart";
 import {
@@ -202,6 +202,19 @@ export default function QuickTimerScreen() {
       alive = false;
       unsub?.();
     };
+  }, []);
+
+  // ❤️ disconnessione reale (hardware o manuale): azzera badge e dato —
+  // hrRef si auto-specchia da `hr` (effect già esistente), quindi basta
+  // azzerare qui lo stato per fermare anche l'accumulatore di zone.
+  useEffect(() => {
+    const unsub = subscribeHrStatus((status) => {
+      if (status === "disconnected") {
+        setHrStatus("disconnected");
+        setHr(null);
+      }
+    });
+    return () => { if (typeof unsub === "function") unsub(); };
   }, []);
 
   // Campionamento zone 1Hz

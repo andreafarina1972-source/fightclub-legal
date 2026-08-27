@@ -10,7 +10,7 @@ import AdBanner from "../components/AdBanner";
 import ProGate from "../components/ProGate";
 import LoadDecisionCard from "../components/LoadDecisionCard";
 import { useLoadDecision } from "../hooks/useLoadDecision";
-import { connectHeartRate, subscribeHeartRate } from "../services/heartRateService";
+import { connectHeartRate, subscribeHeartRate, subscribeHrStatus } from "../services/heartRateService";
 
 // ✅ storico (sessions + vo2)
 import { useHistoryData } from "../context/HistoryContext";
@@ -274,6 +274,18 @@ export default function HomeScreen({ navigation }) {
       alive = false;
       unsub?.();
     };
+  }, []);
+
+  // ✅ disconnessione reale (hardware o manuale): azzera badge e dato,
+  // mai lasciare l'ultimo bpm stale in giro
+  useEffect(() => {
+    const unsub = subscribeHrStatus((status) => {
+      if (status === "disconnected") {
+        setHrStatus("disconnected");
+        setHr(null);
+      }
+    });
+    return () => { if (typeof unsub === "function") unsub(); };
   }, []);
 
   // ✅ prova connessione quando la schermata va in focus

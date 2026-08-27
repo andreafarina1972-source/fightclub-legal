@@ -26,7 +26,7 @@ import { startPunchDetection, stopPunchDetection } from "../services/punchDetect
 import { useHistoryData } from "../context/HistoryContext";
 import { estimateCaloriesFromSession } from "../services/vo2Utils";
 
-import { connectHeartRate, subscribeHeartRate } from "../services/heartRateService";
+import { connectHeartRate, subscribeHeartRate, subscribeHrStatus } from "../services/heartRateService";
 
 import PunchesBarChart from "../components/charts/PunchesBarChart";
 import CardioZonesChart from "../components/CardioZonesChart";
@@ -239,6 +239,20 @@ export default function TimerScreen({ route }) {
       alive = false;
       unsub?.();
     };
+  }, []);
+
+  // ❤️ disconnessione reale (hardware o manuale): azzera badge e dato —
+  // hrRef si auto-specchia da `hr` (effect già esistente), quindi basta
+  // azzerare qui lo stato per fermare anche l'accumulatore di zone e il
+  // tracker picco/media per round.
+  useEffect(() => {
+    const unsub = subscribeHrStatus((status) => {
+      if (status === "disconnected") {
+        setHrStatus("disconnected");
+        setHr(null);
+      }
+    });
+    return () => { if (typeof unsub === "function") unsub(); };
   }, []);
 
   useEffect(() => {

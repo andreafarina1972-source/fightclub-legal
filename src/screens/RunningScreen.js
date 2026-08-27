@@ -77,7 +77,7 @@ const LEAFLET_HTML = `<!doctype html>
 import { t } from "../i18n";
 import { useHistoryData } from "../context/HistoryContext";
 import { estimateCaloriesFromSession } from "../services/vo2Utils";
-import { connectHeartRate, subscribeHeartRate, getConnectedDeviceInfo, getDefaultHeartRateDevice, getAntDefaultDevice } from "../services/heartRateService";
+import { connectHeartRate, subscribeHeartRate, subscribeHrStatus, getConnectedDeviceInfo, getDefaultHeartRateDevice, getAntDefaultDevice } from "../services/heartRateService";
 import CardioZonesChart from "../components/CardioZonesChart";
 import { getHrMax, zonesMeta, trainingZonesMeta, initZonesAccumulator, accumulateZones } from "../services/hrZones";
 import { computeKmSplits, computeTimeSeries } from "../services/runningSplits";
@@ -438,6 +438,21 @@ export default function RunningScreen() {
       setHrStatus("connected");
       if (hrMinRef.current == null || bpmRound < hrMinRef.current) hrMinRef.current = bpmRound;
       if (hrMaxSessionRef.current == null || bpmRound > hrMaxSessionRef.current) hrMaxSessionRef.current = bpmRound;
+    });
+    return () => { if (typeof unsub === "function") unsub(); };
+  }, []);
+
+  // ❤️ disconnessione reale (hardware o manuale): azzera badge e dato —
+  // hrRef va azzerato esplicitamente qui, non è specchiato da un effect
+  // separato (lo scrive solo la callback bpm sopra), altrimenti il
+  // tagging HR dei punti GPS continuerebbe a usare l'ultimo valore stale.
+  useEffect(() => {
+    const unsub = subscribeHrStatus((status) => {
+      if (status === "disconnected") {
+        setHrStatus("disconnected");
+        setHr(null);
+        hrRef.current = null;
+      }
     });
     return () => { if (typeof unsub === "function") unsub(); };
   }, []);

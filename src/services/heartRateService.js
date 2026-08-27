@@ -37,6 +37,9 @@ let antActive = false; // true quando ANT+ sta ricevendo dati validi
 const listeners = new Set();
 
 function emit(bpm, source = "ble") {
+  // qualunque dato arrivi (anche uno scartato sotto) conferma che la
+  // sorgente autorevole del momento sta trasmettendo → stato "connected"
+  emitStatus("connected");
   // se ANT+ è attivo, scarta i pacchetti BLE (evita media doppia)
   if (source === "ble" && antActive) return;
   lastBpm = bpm;
@@ -49,6 +52,29 @@ export function subscribeHeartRate(cb) {
   if (typeof cb === "function") listeners.add(cb);
   if (lastBpm != null && typeof cb === "function") cb(lastBpm);
   return () => listeners.delete(cb);
+}
+
+// ─────────────────────────────────────────────
+// CANALE DI STATO (separato dai bpm) — "connected" | "disconnected"
+// Serve a notificare gli screen di una disconnessione reale (hardware
+// o manuale), cosa che subscribeHeartRate() non fa: quel canale
+// trasporta solo valori bpm, mai un segnale di "silenzio".
+// ─────────────────────────────────────────────
+let hrStatusValue = "disconnected";
+const statusListeners = new Set();
+
+function emitStatus(status) {
+  if (status === hrStatusValue) return; // dedup, niente rumore a ogni bpm
+  hrStatusValue = status;
+  for (const fn of statusListeners) {
+    try { fn(status); } catch {}
+  }
+}
+
+export function subscribeHrStatus(cb) {
+  if (typeof cb === "function") statusListeners.add(cb);
+  if (typeof cb === "function") cb(hrStatusValue); // replay, come subscribeHeartRate/lastBpm
+  return () => statusListeners.delete(cb);
 }
 
 // ─────────────────────────────────────────────
@@ -426,6 +452,8 @@ async function connectBleDevice(deviceId, nameHint) {
     bleDevice = null;
     bleDeviceName = null;
     cleanupBleSubscriptions();
+    lastBpm = null;
+    emitStatus("disconnected");
     console.log("🛑 BLE HR disconnessa (evento)");
   });
 
@@ -500,6 +528,8 @@ async function connectAntDevice(devNumber, nameHint) {
       antDeviceNumber = null;
       antDeviceName   = null;
       cleanupAntListeners();
+      lastBpm = null;
+      emitStatus("disconnected");
     }
   });
 
@@ -668,6 +698,8 @@ export async function disconnectHeartRate() {
       }
     }
 
+    lastBpm = null;
+    emitStatus("disconnected");
     console.log("🛑 HR disconnessa (BLE + ANT+)");
   } finally {
     bleDisconnecting = false;

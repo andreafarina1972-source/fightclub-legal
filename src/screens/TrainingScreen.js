@@ -8,7 +8,7 @@ import { t } from "../i18n";
 import { useHistoryData } from "../context/HistoryContext";
 import { estimateCaloriesFromSession } from "../services/vo2Utils";
 
-import { connectHeartRate, subscribeHeartRate } from "../services/heartRateService";
+import { connectHeartRate, subscribeHeartRate, subscribeHrStatus } from "../services/heartRateService";
 import CardioZonesChart from "../components/CardioZonesChart";
 import { getHrMax, zonesMeta, trainingZonesMeta, initZonesAccumulator, accumulateZones } from "../services/hrZones";
 
@@ -155,6 +155,18 @@ export default function TrainingScreen() {
     return () => {
       if (typeof unsub === "function") unsub();
     };
+  }, []);
+
+  // ❤️ disconnessione reale (hardware o manuale): azzera badge e dato,
+  // così l'accumulatore di zone smette di scrivere il valore stale.
+  useEffect(() => {
+    const unsub = subscribeHrStatus((status) => {
+      if (status === "disconnected") {
+        setHrStatus("disconnected");
+        setHr(null);
+      }
+    });
+    return () => { if (typeof unsub === "function") unsub(); };
   }, []);
 
   // tick (1s)
