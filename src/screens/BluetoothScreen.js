@@ -11,6 +11,8 @@ import {
   setDefaultHeartRateDevice,
   getDefaultHeartRateDevice,
   clearDefaultHeartRateDevice,
+  getAntDefaultDevice,
+  clearAntDefaultDevice,
   connectHeartRate,
   disconnectHeartRate,
   subscribeHeartRate,
@@ -21,6 +23,7 @@ export default function BluetoothScreen({ navigation }) {
   const [devices, setDevices] = useState([]);
   const [status, setStatus] = useState("idle"); // idle | scanning | done
   const [defaultDev, setDefaultDev] = useState(null);
+  const [antDefaultDev, setAntDefaultDev] = useState(null);
 
   // stato connessione “reale” basato sull’arrivo di bpm
   const [hr, setHr] = useState(null);
@@ -35,6 +38,12 @@ export default function BluetoothScreen({ navigation }) {
         setDefaultDev(def || null);
       } catch (e) {
         console.log("getDefaultHeartRateDevice error:", e?.message || e);
+      }
+      try {
+        const antDef = await getAntDefaultDevice();
+        setAntDefaultDev(antDef || null);
+      } catch (e) {
+        console.log("getAntDefaultDevice error:", e?.message || e);
       }
     })();
   }, []);
@@ -151,6 +160,19 @@ export default function BluetoothScreen({ navigation }) {
     }
   };
 
+  const clearAntDefault = async () => {
+    try {
+      await clearAntDefaultDevice();
+      setAntDefaultDev(null);
+
+      await disconnectHeartRate();
+      setHr(null);
+      setHrStatus("disconnected");
+    } catch (e) {
+      console.log("clearAntDefault error:", e?.message || e);
+    }
+  };
+
   const handleDisconnect = async () => {
     try {
       await disconnectHeartRate();
@@ -204,6 +226,23 @@ export default function BluetoothScreen({ navigation }) {
         ) : (
           <Text style={styles.hint}>{t("bluetooth.noDefault", { defaultValue: "Nessun dispositivo predefinito salvato." })}</Text>
         )}
+
+        {antDefaultDev ? (
+          <View style={styles.defaultBox}>
+            <Text style={styles.defaultTitle}>{t("bluetooth.antDefaultTitle", { defaultValue: "Fascia ANT+ predefinita" })}</Text>
+            <Text style={styles.defaultText}>{antDefaultDev.name}</Text>
+            <Text style={styles.defaultSub}>#{antDefaultDev.antDeviceNumber}</Text>
+
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+              <TouchableOpacity
+                style={[styles.smallBtn, { backgroundColor: "#444" }]}
+                onPress={clearAntDefault}
+              >
+                <Text style={styles.smallBtnText}>{t("common.delete", { defaultValue: "RIMUOVI" })}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
 
         <Text style={styles.section}>{t("bluetooth.found", { defaultValue: "Dispositivi trovati" })}</Text>
 

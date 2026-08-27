@@ -117,6 +117,7 @@ let bleScanning      = false;
 let bleConnecting    = false;
 let bleDisconnecting = false;
 let bleDevice        = null;
+let bleDeviceName    = null; // nome del dispositivo BLE connesso (per UI)
 let hrSub            = null;
 let disconnectSub    = null;
 
@@ -124,7 +125,9 @@ let disconnectSub    = null;
 // STATO ANT+
 // ─────────────────────────────────────────────
 let antSearching       = false;
+let antConnecting      = false; // true durante il tentativo di connect ANT+ (simmetrico a bleConnecting)
 let antDeviceNumber    = null; // numero dispositivo ANT+ connesso
+let antDeviceName      = null; // nome del dispositivo ANT+ connesso (per UI)
 let antHrListener      = null; // subscription NativeEventEmitter
 let antFoundListener   = null;
 let antStateListener   = null;
@@ -158,6 +161,13 @@ export async function clearDefaultHeartRateDevice() {
 
 // Storage specifico ANT+
 async function saveAntDevice(antDevNum, name) {
+  // Guardrail: non sovrascrivere un default già esistente (ridondante col
+  // gate in connectHeartRate() che oggi rende questa funzione raggiungibile
+  // solo al primo uso, ma resta come ultima linea di difesa se la cascata
+  // viene rifattorizzata in futuro).
+  const existing = await loadAntDevice();
+  if (existing?.antDeviceNumber != null) return;
+
   await AsyncStorage.setItem(ANT_DEFAULT_DEVICE_KEY, JSON.stringify({
     antDeviceNumber: antDevNum,
     name: name || `ANT+ HR #${antDevNum}`,
@@ -172,6 +182,10 @@ async function loadAntDevice() {
     const obj = JSON.parse(raw);
     return obj?.antDeviceNumber != null ? obj : null;
   } catch { return null; }
+}
+
+export async function getAntDefaultDevice() {
+  return await loadAntDevice();
 }
 
 async function clearAntDevice() {
@@ -396,7 +410,7 @@ export async function scanAntDevices({ timeoutMs = 10000, onUpdate } = {}) {
 // ─────────────────────────────────────────────
 // CONNESSIONE BLE (interna)
 // ─────────────────────────────────────────────
-async function connectBleDevice(deviceId) {
+async function connectBleDevice(deviceId, nameHint) {
   const mgr = getBleManager();
   if (!mgr) throw new Error("BLE non disponibile");
 
@@ -405,10 +419,12 @@ async function connectBleDevice(deviceId) {
 
   const d = await mgr.connectToDevice(deviceId, { autoConnect: false });
   bleDevice = d;
+  bleDeviceName = nameHint || d.name || d.localName || null;
 
   try { disconnectSub?.remove?.(); } catch {}
   disconnectSub = mgr.onDeviceDisconnected(d.id, () => {
     bleDevice = null;
+    bleDeviceName = null;
     cleanupBleSubscriptions();
     console.log("🛑 BLE HR disconnessa (evento)");
   });
@@ -436,10 +452,18 @@ async function connectBleDevice(deviceId) {
 // ─────────────────────────────────────────────
 // CONNESSIONE ANT+ (interna)
 // ─────────────────────────────────────────────
-async function connectAntDevice(devNumber) {
+async function connectAntDevice(devNumber, nameHint) {
   const ant     = getAnt();
   const emitter = getAntEmitter();
   if (!ant || !emitter) throw new Error("ANT+ non disponibile");
+
+  // Già connessi (e attivi) a questo stesso device: nessun bisogno di
+  // ripetere la connect né di smontare il listener di disconnessione
+  // esistente, che è già quello corretto. Evita di lasciare lo stato
+  // "connesso" senza sorveglianza se un tentativo ridondante fallisse.
+  if (antDeviceNumber === devNumber && antActive) {
+    return devNumber;
+  }
 
   // ferma eventuale ricerca attiva
   await stopAntSearchSafe();
@@ -450,6 +474,7 @@ async function connectAntDevice(devNumber) {
   if (!result?.connected) throw new Error(`ANT+ connect fallito: state=${result?.state}`);
 
   antDeviceNumber = devNumber;
+  antDeviceName   = nameHint || `ANT+ HR #${devNumber}`;
 
   // sottoscrivi eventi HR
   await ant.subscribe(devNumber, ANT_HR_TYPE, ["HeartRateData"], true);
@@ -473,6 +498,7 @@ async function connectAntDevice(devNumber) {
       console.log("🛑 ANT+ HR disconnessa (stato cambio)");
       antActive       = false;
       antDeviceNumber = null;
+      antDeviceName   = null;
       cleanupAntListeners();
     }
   });
@@ -482,23 +508,63 @@ async function connectAntDevice(devNumber) {
 }
 
 // ─────────────────────────────────────────────
+// Retry diretto sullo STESSO id — recupera intoppi transitori del BLE
+// Android senza mai passare da uno scan (che potrebbe agganciare un
+// device diverso). Usato solo per riconnettersi al default salvato.
+// ─────────────────────────────────────────────
+async function connectDirectWithRetry(connectFn, retries = 1, backoffMs = 600) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, backoffMs));
+    try {
+      return await connectFn();
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr;
+}
+
+// ─────────────────────────────────────────────
 // connectHeartRate() — API PUBBLICA
 //
 // Strategia (Android):
-//   1. Prova il dispositivo ANT+ salvato in precedenza
-//   2. Prova il dispositivo BLE salvato in precedenza
-//   3. Avvia scan ANT+ (10s) e si connette al primo trovato
-//   4. Avvia scan BLE come fallback finale
+//   1. Prova il dispositivo ANT+ salvato (connect-by-id, con retry diretto)
+//   2. Prova il dispositivo BLE salvato (connect-by-id, con retry diretto)
+//   3. Se un default esiste ma non risponde nemmeno dopo il retry: STOP,
+//      nessun fallback automatico — un default salvato è una scelta
+//      dell'utente, il fallback "primo trovato" non deve scavalcarla in
+//      silenzio (rischio: agganciare la fascia di un altro atleta, es. in
+//      una palestra affollata). Riconnettersi a un device diverso deve
+//      restare un'azione esplicita (BluetoothScreen).
+//   4. Solo se NON esiste alcun default (primo uso): scan ANT+ (10s) e
+//      connessione al primo trovato, poi scan BLE come fallback finale
 //
 // iOS: salta tutto ANT+, usa solo BLE
 // ─────────────────────────────────────────────
 export async function connectHeartRate() {
-  if ((bleDevice || bleConnecting) && !antDeviceNumber) return;
+  // Guardia simmetrica: blocca il rientro se una connessione (o un
+  // tentativo) è già in corso su UNO QUALSIASI dei due trasporti. Prima
+  // mancava il lato ANT+ (antDeviceNumber != null / antConnecting), il
+  // che permetteva a un rientro (es. HomeScreen che torna in focus mentre
+  // già connessa via ANT+) di ritentare connectAntDevice() sullo stesso
+  // device e smontarne il listener di disconnessione.
+  //
+  // TODO(debito di test): il percorso di rientro ANT+ (guardia simmetrica
+  // + connectAntDevice() che salta cleanup su stesso device attivo) NON è
+  // stato validato su hardware ANT+ reale — solo il percorso BLE è stato
+  // verificato su device. Il bug originale (listener smontato su rientro)
+  // è nato proprio da un ramo ANT+ mai testato fisicamente: non fidarsi
+  // di questa logica per l'ANT+ finché non viene provata con una fascia
+  // ANT+ reale (sessione attiva → Home → altrove → Home → spegni fascia
+  // → verificare che getConnectedDeviceInfo() torni null).
+  if (bleDevice || bleConnecting || antDeviceNumber != null || antConnecting) return;
 
   const isAndroid = Platform.OS === "android";
   const ant       = isAndroid ? getAnt() : null;
 
   bleConnecting = true;
+  antConnecting = true;
 
   try {
     const okPerm = await ensureAndroidPermissions();
@@ -507,41 +573,47 @@ export async function connectHeartRate() {
     const btOn = await waitForBluetoothPoweredOn();
     if (!btOn) { console.log("❌ Bluetooth non attivo"); return; }
 
+    const savedAnt = ant ? await loadAntDevice() : null;
+    const savedBle = await getDefaultHeartRateDevice();
+    const hasSavedDefault = (savedAnt?.antDeviceNumber != null) || !!savedBle?.id;
+
     // ── STEP 1: prova dispositivo ANT+ salvato (solo Android) ──────────
-    if (ant) {
-      const savedAnt = await loadAntDevice();
-      if (savedAnt?.antDeviceNumber != null) {
-        try {
-          console.log("🔁 Provo ANT+ default:", savedAnt.name, savedAnt.antDeviceNumber);
-          await connectAntDevice(savedAnt.antDeviceNumber);
-          return; // ✅ connesso via ANT+
-        } catch (e) {
-          console.log("⚠️ ANT+ default non raggiungibile:", e?.message || e);
-        }
+    if (savedAnt?.antDeviceNumber != null) {
+      try {
+        console.log("🔁 Provo ANT+ default:", savedAnt.name, savedAnt.antDeviceNumber);
+        await connectDirectWithRetry(() => connectAntDevice(savedAnt.antDeviceNumber, savedAnt.name));
+        return; // ✅ connesso via ANT+
+      } catch (e) {
+        console.log("⚠️ ANT+ default non raggiungibile dopo retry:", e?.message || e);
       }
     }
 
     // ── STEP 2: prova dispositivo BLE salvato ──────────────────────────
-    const savedBle = await getDefaultHeartRateDevice();
     if (savedBle?.id) {
       try {
         console.log("🔁 Provo BLE default:", savedBle.name, savedBle.id);
-        await connectBleDevice(savedBle.id);
+        await connectDirectWithRetry(() => connectBleDevice(savedBle.id, savedBle.name));
         return; // ✅ connesso via BLE
       } catch (e) {
-        console.log("⚠️ BLE default non raggiungibile:", e?.message || e);
+        console.log("⚠️ BLE default non raggiungibile dopo retry:", e?.message || e);
       }
     }
 
-    // ── STEP 3: scan ANT+ e primo trovato (solo Android) ───────────────
+    // ── Un default esiste ma non risponde: STOP, nessun fallback ───────
+    if (hasSavedDefault) {
+      console.log("❌ Default salvato non raggiungibile, nessun fallback automatico (scelta utente rispettata)");
+      return;
+    }
+
+    // ── STEP 3: nessun default esistente — scan ANT+ e primo trovato ───
     if (ant) {
       console.log("🔍 Scan ANT+ (10s)...");
       const antList = await scanAntDevices({ timeoutMs: 10000 });
       if (antList?.length) {
         const first = antList[0];
         console.log("✅ ANT+ candidato:", first.name, first.antDeviceNumber);
-        await connectAntDevice(first.antDeviceNumber);
-        await saveAntDevice(first.antDeviceNumber, first.name); // salva per la prossima volta
+        await connectAntDevice(first.antDeviceNumber, first.name);
+        await saveAntDevice(first.antDeviceNumber, first.name); // primo uso: nessun default preesistente
         return; // ✅ connesso via ANT+
       }
       console.log("⚠️ Nessun dispositivo ANT+ trovato, provo BLE...");
@@ -554,12 +626,13 @@ export async function connectHeartRate() {
 
     const first = bleList[0];
     console.log("✅ BLE candidato:", first.name, first.id);
-    await connectBleDevice(first.id);
+    await connectBleDevice(first.id, first.name);
 
   } catch (e) {
     console.log("❌ connectHeartRate FAILED:", e?.message || e);
   } finally {
     bleConnecting = false;
+    antConnecting = false;
   }
 }
 
@@ -577,6 +650,7 @@ export async function disconnectHeartRate() {
     // Disconnetti BLE
     const d = bleDevice;
     bleDevice = null;
+    bleDeviceName = null;
     if (d) { try { await d.cancelConnection(); } catch {} }
     cleanupBleSubscriptions();
 
@@ -585,6 +659,7 @@ export async function disconnectHeartRate() {
       const ant = getAnt();
       const devNum = antDeviceNumber;
       antDeviceNumber = null;
+      antDeviceName   = null;
       antActive       = false;
       cleanupAntListeners();
       if (ant) {
@@ -605,6 +680,19 @@ export async function disconnectHeartRate() {
 export function getConnectionSource() {
   if (antDeviceNumber != null && antActive) return "ant";
   if (bleDevice)                            return "ble";
+  return null;
+}
+
+// Dispositivo EFFETTIVAMENTE connesso ora (non il default salvato) —
+// serve alla UI per mostrare/confrontare col default e far notare
+// all'utente un eventuale aggancio a una fascia diversa dalla propria.
+export function getConnectedDeviceInfo() {
+  if (antDeviceNumber != null && antActive) {
+    return { source: "ant", id: String(antDeviceNumber), name: antDeviceName || `ANT+ HR #${antDeviceNumber}` };
+  }
+  if (bleDevice) {
+    return { source: "ble", id: bleDevice.id, name: bleDeviceName || bleDevice.name || bleDevice.localName || "Dispositivo HR" };
+  }
   return null;
 }
 

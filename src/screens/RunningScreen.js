@@ -77,7 +77,7 @@ const LEAFLET_HTML = `<!doctype html>
 import { t } from "../i18n";
 import { useHistoryData } from "../context/HistoryContext";
 import { estimateCaloriesFromSession } from "../services/vo2Utils";
-import { connectHeartRate, subscribeHeartRate } from "../services/heartRateService";
+import { connectHeartRate, subscribeHeartRate, getConnectedDeviceInfo, getDefaultHeartRateDevice, getAntDefaultDevice } from "../services/heartRateService";
 import CardioZonesChart from "../components/CardioZonesChart";
 import { getHrMax, zonesMeta, trainingZonesMeta, initZonesAccumulator, accumulateZones } from "../services/hrZones";
 import { computeKmSplits, computeTimeSeries } from "../services/runningSplits";
@@ -354,6 +354,8 @@ export default function RunningScreen() {
   // HR
   const [hrStatus, setHrStatus] = useState("disconnected");
   const [hr, setHr] = useState(null);
+  const [connectedDeviceInfo, setConnectedDeviceInfo] = useState(null);
+  const [hrMismatch, setHrMismatch] = useState(false);
   const hrRef = useRef(null); // specchio sempre aggiornato di `hr`, per le closure a deps vuote (es. startLocationWatch)
   const hrMinRef = useRef(null);
   const hrMaxSessionRef = useRef(null);
@@ -439,6 +441,34 @@ export default function RunningScreen() {
     });
     return () => { if (typeof unsub === "function") unsub(); };
   }, []);
+
+  // ❤️ Device effettivamente connesso vs default salvato — permette di
+  // accorgersi di un aggancio a una fascia diversa dalla propria.
+  useEffect(() => {
+    if (hrStatus !== "connected") {
+      setConnectedDeviceInfo(null);
+      setHrMismatch(false);
+      return;
+    }
+    (async () => {
+      const info = getConnectedDeviceInfo();
+      setConnectedDeviceInfo(info);
+      if (!info) { setHrMismatch(false); return; }
+      try {
+        if (info.source === "ble") {
+          const def = await getDefaultHeartRateDevice();
+          setHrMismatch(!!def?.id && def.id !== info.id);
+        } else if (info.source === "ant") {
+          const def = await getAntDefaultDevice();
+          setHrMismatch(def?.antDeviceNumber != null && String(def.antDeviceNumber) !== info.id);
+        } else {
+          setHrMismatch(false);
+        }
+      } catch {
+        setHrMismatch(false);
+      }
+    })();
+  }, [hrStatus]);
 
   // tick 1s
   useEffect(() => {
@@ -809,6 +839,12 @@ export default function RunningScreen() {
             {hrStatusText} • {gpsLine}{" "}
             <Text style={styles.hrMinMax}>HR min/max: {hrMinRef.current ?? "--"} / {hrMaxSessionRef.current ?? "--"}</Text>
           </Text>
+          {connectedDeviceInfo && (
+            <Text style={[styles.statusLine, hrMismatch && { color: "#F6B100", fontWeight: "700" }]}>
+              {t("bluetooth.connectedDevice", { defaultValue: "Dispositivo connesso" })}: {connectedDeviceInfo.name}
+              {hrMismatch ? ` (${t("bluetooth.connectedMismatch", { defaultValue: "diverso dal predefinito" })})` : ""}
+            </Text>
+          )}
         </View>
 
         {/* ── LEGENDA ZONE ────────────────────────────── */}

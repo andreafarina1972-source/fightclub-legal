@@ -185,6 +185,9 @@ const translations = {
       saveFail: "Impossibile salvare o connettere il dispositivo.",
       connErrorTitle: "Errore connessione",
       connErrorBody: "Connessione non riuscita. Assicurati che:\n• la fascia sia indossata\n• Bluetooth attivo\n• permessi concessi\n• fascia non sia già connessa ad un altro device",
+      antDefaultTitle: "Fascia ANT+ predefinita",
+      connectedDevice: "Dispositivo connesso",
+      connectedMismatch: "diverso dal predefinito",
     },
     customTimer: {
       title: "Timer personalizzato",
@@ -1016,6 +1019,9 @@ const translations = {
     saveFail: "Could not save or connect the device.",
     connErrorTitle: "Connection error",
     connErrorBody: "Connection failed. Make sure that:\n• the strap is worn\n• Bluetooth is on\n• permissions are granted\n• the strap isn't already connected to another device",
+    antDefaultTitle: "Default ANT+ strap",
+    connectedDevice: "Connected device",
+    connectedMismatch: "different from default",
   },
   customTimer: {
     title: "Custom timer",

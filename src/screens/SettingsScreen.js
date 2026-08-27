@@ -25,6 +25,9 @@ import {
   disconnectHeartRate,
   subscribeHeartRate,
   getConnectionSource,
+  getConnectedDeviceInfo,
+  getDefaultHeartRateDevice,
+  getAntDefaultDevice,
 } from "../services/heartRateService";
 import {
   setApiKey, loadApiKey, clearApiKey,
@@ -112,6 +115,8 @@ export default function SettingsScreen({ navigation }) {
 
   // ❤️ HR
   const [hrStatus, setHrStatus] = useState("disconnected");
+  const [connectedDeviceInfo, setConnectedDeviceInfo] = useState(null);
+  const [hrMismatch, setHrMismatch] = useState(false);
   // AI Coach API Key
   const [apiKey, setApiKeyState] = useState("");
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
@@ -166,6 +171,35 @@ export default function SettingsScreen({ navigation }) {
     });
     return unsubscribe;
   }, []);
+
+  // ❤️ Device effettivamente connesso vs default salvato — permette
+  // all'utente di accorgersi di un aggancio a una fascia diversa dalla
+  // propria (vedi CORREZIONE 3).
+  useEffect(() => {
+    if (hrStatus !== "connected") {
+      setConnectedDeviceInfo(null);
+      setHrMismatch(false);
+      return;
+    }
+    (async () => {
+      const info = getConnectedDeviceInfo();
+      setConnectedDeviceInfo(info);
+      if (!info) { setHrMismatch(false); return; }
+      try {
+        if (info.source === "ble") {
+          const def = await getDefaultHeartRateDevice();
+          setHrMismatch(!!def?.id && def.id !== info.id);
+        } else if (info.source === "ant") {
+          const def = await getAntDefaultDevice();
+          setHrMismatch(def?.antDeviceNumber != null && String(def.antDeviceNumber) !== info.id);
+        } else {
+          setHrMismatch(false);
+        }
+      } catch {
+        setHrMismatch(false);
+      }
+    })();
+  }, [hrStatus]);
 
   const loadSavedSettings = async () => {
     try {
@@ -973,6 +1007,13 @@ export default function SettingsScreen({ navigation }) {
             </Text>
 
             {currentHr && <Text style={styles.hrValue}>❤️ {currentHr} bpm</Text>}
+
+            {connectedDeviceInfo && (
+              <Text style={[styles.sub, hrMismatch && { color: "#F6B100", fontWeight: "700" }]}>
+                {t("bluetooth.connectedDevice", { defaultValue: "Dispositivo connesso" })}: {connectedDeviceInfo.name}
+                {hrMismatch ? ` (${t("bluetooth.connectedMismatch", { defaultValue: "diverso dal predefinito" })})` : ""}
+              </Text>
+            )}
 
             <TouchableOpacity
               style={[styles.profileBtn, hrStatus === "connected" && { backgroundColor: "#331111" }]}
