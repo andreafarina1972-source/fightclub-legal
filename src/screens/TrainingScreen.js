@@ -239,7 +239,7 @@ export default function TrainingScreen() {
     }
 
     try {
-      await activateKeepAwakeAsync();
+      await activateKeepAwakeAsync("training-session");
     } catch {}
 
     // prova connessione HR strap (non bloccare se fallisce)
@@ -259,7 +259,7 @@ export default function TrainingScreen() {
     setRunning(false);
 
     try {
-      deactivateKeepAwake();
+      deactivateKeepAwake("training-session");
     } catch {}
 
     const totalSeconds = elapsed;
@@ -281,6 +281,8 @@ export default function TrainingScreen() {
               type: "training", // ✅ sessione allenamento generico
               workoutId: null,
               workoutName: "Allenamento",
+              totalMinutes: Math.round(totalSeconds / 60),
+              totalSeconds,
               punches: 0,
               punchesByRound: [],
               avgHr: hr ?? null,

@@ -206,12 +206,12 @@ export default function TimerScreen({ route }) {
   useEffect(() => {
     const isRunning = phase !== "idle" && phase !== "finish";
     if (isRunning) {
-      activateKeepAwakeAsync();
+      activateKeepAwakeAsync("timer-session");
     } else {
-      deactivateKeepAwake();
+      deactivateKeepAwake("timer-session");
     }
     return () => {
-      deactivateKeepAwake();
+      deactivateKeepAwake("timer-session");
     };
   }, [phase]);
 

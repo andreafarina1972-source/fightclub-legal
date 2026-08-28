@@ -140,12 +140,12 @@ export default function QuickTimerScreen() {
   useEffect(() => {
   const isRunning = phase === "work" || phase === "rest";
   if (isRunning) {
-    activateKeepAwakeAsync();
+    activateKeepAwakeAsync("quicktimer-session");
   } else {
-    deactivateKeepAwake();
+    deactivateKeepAwake("quicktimer-session");
   }
   return () => {
-    deactivateKeepAwake();
+    deactivateKeepAwake("quicktimer-session");
   };
 }, [phase]);
 

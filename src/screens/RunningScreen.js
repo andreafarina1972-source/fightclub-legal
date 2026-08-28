@@ -373,6 +373,7 @@ export default function RunningScreen() {
   const [speedMax, setSpeedMax] = useState(null);
   const routeRef = useRef([]);
   const lastPointRef = useRef(null);
+  const lastFixReceivedAtRef = useRef(null); // wall-clock locale, per il watchdog di segnale perso
   const locationSubRef = useRef(null);
   const previewSubRef = useRef(null);
   const mapRef = useRef(null);
@@ -413,6 +414,7 @@ export default function RunningScreen() {
     setBestKmPace(null);
     routeRef.current = [];
     lastPointRef.current = null;
+    lastFixReceivedAtRef.current = null;
     hrRef.current = null;
     hrMinRef.current = null;
     hrMaxSessionRef.current = null;
@@ -490,6 +492,27 @@ export default function RunningScreen() {
     if (!running) return;
     tickRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => { if (tickRef.current) clearInterval(tickRef.current); tickRef.current = null; };
+  }, [running]);
+
+  // Watchdog segnale GPS perso — senza questo, gpsStatus resta bloccato su
+  // "ok" per sempre una volta agganciato, anche se i fix smettono di
+  // arrivare (stesso bug del bpm fantasma: un canale che comunica solo
+  // "dato buono arrivato", mai "il dato buono è scaduto"). Non tocca
+  // distanceM (già protetta dal limite di 30m per salto) né hrMin/Max
+  // (dati storici cumulativi) — solo lo stato "vivo" del segnale e la
+  // velocità istantanea, che altrimenti resterebbe congelata all'ultimo
+  // valore reale mostrando un ritmo che non riflette più la realtà.
+  const GPS_STALE_MS = 8000;
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => {
+      const lastAt = lastFixReceivedAtRef.current;
+      if (lastAt != null && Date.now() - lastAt > GPS_STALE_MS) {
+        setGpsStatus((s) => (s === "ok" ? "searching" : s));
+        setSpeedNow(null);
+      }
+    }, 2000);
+    return () => clearInterval(id);
   }, [running]);
 
   // accumulate zones
@@ -614,6 +637,7 @@ export default function RunningScreen() {
           if (d >= 0 && d <= 30 && dtSec > 0.3 && dtSec < 15) measuredSp = d / dtSec;
         }
         lastPointRef.current = point;
+        lastFixReceivedAtRef.current = Date.now();
         routeRef.current.push(point);
         if (showMap) {
           const segments = buildHrSegments(routeRef.current, hrMaxRef.current);
@@ -673,7 +697,7 @@ export default function RunningScreen() {
     lastAccRef.current = Date.now();
     try { const v = await getHrMax(); hrMaxRef.current = Number(v) || 0; setHrMax(Number(v) || 0); }
     catch { hrMaxRef.current = 0; setHrMax(0); }
-    try { await activateKeepAwakeAsync(); } catch {}
+    try { await activateKeepAwakeAsync("running-session"); } catch {}
     try { setHrStatus("scanning"); await connectHeartRate(); }
     catch { setHrStatus("disconnected"); }
     try { await startLocationWatch(); }
@@ -685,7 +709,7 @@ export default function RunningScreen() {
   const stopAndAskSave = useCallback(async () => {
     if (!running) return;
     setRunning(false);
-    try { deactivateKeepAwake(); } catch {}
+    try { deactivateKeepAwake("running-session"); } catch {}
     await stopLocationWatch();
     if (elapsed < 5) return;
 

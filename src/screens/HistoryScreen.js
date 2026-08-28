@@ -210,7 +210,10 @@ function punchesScoreFromPerRound(ppr, baselinePpr) {
 }
 
 function computePerformance(session, baselinePpr) {
-  const cardio = cardioScoreFromZones(session?.hrZones);
+  // getZonesContainer (sotto) legge sia hrZones (Timer/Training/QuickTimer)
+  // sia zones (RunningScreen) — senza, il cardio score di ogni sessione
+  // Running risultava sempre 0, anche con dati HR reali registrati.
+  const cardio = cardioScoreFromZones(getZonesContainer(session));
   const ppr = punchesPerRoundAvg(session);
   const punch = punchesScoreFromPerRound(ppr, baselinePpr);
 
@@ -229,7 +232,7 @@ function computePerformance(session, baselinePpr) {
  * - yMin/yMax: range fisso (utile per VO2, es. 25–75)
  * - refLines: linee orizzontali di riferimento (es. 35/45/55/65)
  */
-function MiniLineChart({ title, values, formatValue = fmtInt, yMin, yMax, refLines }) {
+function MiniLineChart({ title, values, formatValue = fmtInt, yMin, yMax, refLines, headerValue }) {
   const W = 330;
   const H = 110;
   const PAD = 14;
@@ -260,12 +263,16 @@ function MiniLineChart({ title, values, formatValue = fmtInt, yMin, yMax, refLin
           .join(" ");
 
   const last = n ? clean[n - 1] : 0;
+  // headerValue (se passato, es. media ultime 10) sostituisce l'ultimo
+  // singolo punto: un solo valore isolato — es. 0 colpi in una corsa —
+  // sembrava un dato rotto anche quando il resto dello storico era sano.
+  const displayValue = headerValue != null ? headerValue : last;
 
   return (
     <View style={styles.miniChartCard}>
       <View style={styles.miniChartHeader}>
         <Text style={styles.miniChartTitle}>{title}</Text>
-        <Text style={styles.miniChartValue}>{formatValue(last)}</Text>
+        <Text style={styles.miniChartValue}>{formatValue(displayValue)}</Text>
       </View>
 
       <Svg width={W} height={H}>
@@ -520,16 +527,26 @@ export default function HistoryScreen({ navigation }) {
     const totalSessioni = sessions.length;
     const totaleCalorie = sessions.reduce((s, x) => s + (x?.calories || 0), 0);
     const totaleColpi = sessions.reduce((s, x) => s + (x?.punches || 0), 0);
-    const totalMinutes = sessions.reduce((s, x) => s + (x?.totalMinutes || 0), 0);
+    const totalMinutes = sessions.reduce((s, x) => s + (x?.totalMinutes || Math.round(sessionElapsedSeconds(x) / 60)), 0);
     return { totalSessioni, totaleCalorie, totaleColpi, totalMinutes };
   }, [sessions]);
 
   const progressData = useMemo(() => {
     const chrono = [...sessions].reverse();
-    const last10 = chrono.slice(Math.max(0, chrono.length - 10));
+
+    // "Colpi per round" ha senso solo per sessioni con conteggio pugni —
+    // Running e "Allenamento" (TrainingScreen, sessione cardio libera senza
+    // rilevamento colpi) hanno strutturalmente 0 colpi, includerle abbassa
+    // artificialmente sia la baseline mediana sia il grafico. Cardio e
+    // Performance restano invece su TUTTE le sessioni: il dato cardio è
+    // reale in entrambe, va contato.
+    const chronoPunches = chrono.filter((s) => !isRunningSession(s) && s?.type !== "training");
+
+    const last10 = chronoPunches.slice(Math.max(0, chronoPunches.length - 10));
     const baselinePpr = median(last10.map((s) => punchesPerRoundAvg(s))) || 1;
 
     const items = chrono.map((s) => computePerformance(s, baselinePpr));
+    const pprItems = chronoPunches.map((s) => computePerformance(s, baselinePpr));
 
     const lastPerformanceAvg = (() => {
       const tail = items.slice(Math.max(0, items.length - 10));
@@ -537,12 +554,20 @@ export default function HistoryScreen({ navigation }) {
       return Math.round(sum(tail.map((x) => x.performance)) / tail.length);
     })();
 
+    // Media ultime 10 per l'intestazione dei mini-grafici (vedi MiniLineChart
+    // headerValue) — riflette lo storico mostrato dalla curva, non un
+    // singolo punto isolato.
+    const cardioAvg10 = Math.round(avg(items.slice(Math.max(0, items.length - 10)).map((x) => x.cardio)));
+    const pprAvg10 = Math.round(avg(pprItems.slice(Math.max(0, pprItems.length - 10)).map((x) => x.ppr)));
+
     return {
       baselinePpr,
       cardioTrend: items.map((x) => x.cardio),
-      pprTrend: items.map((x) => x.ppr),
+      pprTrend: pprItems.map((x) => x.ppr),
       performanceTrend: items.map((x) => x.performance),
       lastPerformanceAvg,
+      cardioAvg10,
+      pprAvg10,
     };
   }, [sessions]);
 
@@ -857,7 +882,7 @@ export default function HistoryScreen({ navigation }) {
         ) : (
           <>
             <View style={styles.metricsRow}>
-              <Text style={styles.metric}>{t("historyScreen.minutes", { v: fmtInt(item?.totalMinutes) })}</Text>
+              <Text style={styles.metric}>{t("historyScreen.minutes", { v: fmtInt(item?.totalMinutes || Math.round(sessionElapsedSeconds(item) / 60)) })}</Text>
               <Text style={styles.metric}>{t("historyScreen.punches", { v: fmtInt(item?.punches) })}</Text>
               <Text style={styles.metric}>{t("historyScreen.kcal", { v: fmtInt(item?.calories) })}</Text>
             </View>
@@ -953,9 +978,9 @@ export default function HistoryScreen({ navigation }) {
             </Text>
           </View>
 
-          <MiniLineChart title={t("historyScreen.cardioTrend")} values={progressData.cardioTrend} />
-          <MiniLineChart title={t("historyScreen.pprTrend")} values={progressData.pprTrend} />
-          <MiniLineChart title={t("historyScreen.perfTrend")} values={progressData.performanceTrend} />
+          <MiniLineChart title={t("historyScreen.cardioTrend")} values={progressData.cardioTrend} headerValue={progressData.cardioAvg10} />
+          <MiniLineChart title={t("historyScreen.pprTrend")} values={progressData.pprTrend} headerValue={progressData.pprAvg10} />
+          <MiniLineChart title={t("historyScreen.perfTrend")} values={progressData.performanceTrend} headerValue={progressData.lastPerformanceAvg} />
         </View>
       )}
 
