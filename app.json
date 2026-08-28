@@ -63,7 +63,7 @@
     },
     "android": {
       "package": "com.andrea1972.fightclub",
-      "versionCode": 14,
+      "versionCode": 15,
       "allowBackup": false,
       "permissions": [
         "ACCESS_FINE_LOCATION",
