@@ -351,6 +351,9 @@ export default function SettingsScreen({ navigation }) {
   };
 
   const onChangeAgeText = (txt) => {
+    // Non tocca userAgeText qui: farlo nel debounce sovrascriveva il campo
+    // mentre l'utente stava ancora digitando (es. "5" di "54" veniva
+    // clampato a "5" dopo 220ms, impedendo di completare il numero).
     const onlyDigits = String(txt || "").replace(/[^\d]/g, "");
     setUserAgeText(onlyDigits);
 
@@ -362,12 +365,27 @@ export default function SettingsScreen({ navigation }) {
       }
       const a = clampInt(parseInt(onlyDigits, 10), 5, 90);
       setUserAge(a);
-      setUserAgeText(String(a));
       await AsyncStorage.setItem(USER_AGE_KEY, String(a));
     }, 220);
   };
 
+  // Il clamp visivo sul testo va fatto solo qui, a digitazione conclusa —
+  // mai durante la digitazione (vedi commento sopra).
+  const onBlurAgeText = () => {
+    if (saveAgeTimer.current) clearTimeout(saveAgeTimer.current);
+    const onlyDigits = String(userAgeText || "").replace(/[^\d]/g, "");
+    if (!onlyDigits) { setUserAgeText(String(userAge)); return; }
+    const a = clampInt(parseInt(onlyDigits, 10), 5, 90);
+    setUserAge(a);
+    setUserAgeText(String(a));
+    AsyncStorage.setItem(USER_AGE_KEY, String(a));
+  };
+
   const onChangeHrRestText = (txt) => {
+    // Non tocca restingHrText qui: farlo nel debounce sovrascriveva il
+    // campo mentre l'utente stava ancora digitando — con minimo 30,
+    // qualunque prima cifra singola (es. "4" di "45") veniva clampata a
+    // "30" dopo 220ms, rendendo il campo di fatto impossibile da editare.
     const onlyDigits = String(txt || "").replace(/[^\d]/g, "");
     setRestingHrText(onlyDigits);
 
@@ -379,9 +397,20 @@ export default function SettingsScreen({ navigation }) {
       }
       const h = clampInt(parseInt(onlyDigits, 10), 30, 100);
       setRestingHr(h);
-      setRestingHrText(String(h));
       await AsyncStorage.setItem(HR_REST_KEY, String(h));
     }, 220);
+  };
+
+  // Il clamp visivo sul testo va fatto solo qui, a digitazione conclusa —
+  // mai durante la digitazione (vedi commento sopra).
+  const onBlurHrRestText = () => {
+    if (saveHrRestTimer.current) clearTimeout(saveHrRestTimer.current);
+    const onlyDigits = String(restingHrText || "").replace(/[^\d]/g, "");
+    if (!onlyDigits) { setRestingHrText(String(restingHr)); return; }
+    const h = clampInt(parseInt(onlyDigits, 10), 30, 100);
+    setRestingHr(h);
+    setRestingHrText(String(h));
+    AsyncStorage.setItem(HR_REST_KEY, String(h));
   };
 
   // ❤️ HR
@@ -728,6 +757,7 @@ export default function SettingsScreen({ navigation }) {
               <TextInput
                 value={userAgeText}
                 onChangeText={onChangeAgeText}
+                onBlur={onBlurAgeText}
                 placeholder="30"
                 placeholderTextColor="#666"
                 keyboardType="number-pad"
@@ -748,6 +778,7 @@ export default function SettingsScreen({ navigation }) {
               <TextInput
                 value={restingHrText}
                 onChangeText={onChangeHrRestText}
+                onBlur={onBlurHrRestText}
                 placeholder="60"
                 placeholderTextColor="#666"
                 keyboardType="number-pad"
