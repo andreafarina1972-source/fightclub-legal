@@ -13,6 +13,7 @@ import { isWithinRpeWindow } from "../services/rpeWindow";
 import SessionShareCard from "../components/SessionShareCard";
 import ShareCardPreviewModal from "../components/ShareCardPreviewModal";
 import { useShareSession } from "../hooks/useShareSession";
+import { useSocialCardExport } from "../hooks/useSocialCardExport";
 import { useShareBackground } from "../hooks/useShareBackground";
 import { usePro } from "../context/ProContext";
 import ProGate from "../components/ProGate";
@@ -596,12 +597,32 @@ export default function HistoryScreen({ navigation }) {
     const { shareRef, handleShare, sharing } = useShareSession(session);
     const { backgroundUri, pickBackground, removeBackground } = useShareBackground();
     const [previewVisible, setPreviewVisible] = useState(false);
+    // Il bottone principale "Condividi" usa la composizione a canvas fisso
+    // (preset "story", 1080×1920) invece della cattura grezza di
+    // useShareSession: senza, l'immagine condivisa aveva le proporzioni
+    // native della card (380dp di larghezza) invece di quelle di una Storia,
+    // e Instagram/WhatsApp la centravano piccola con testo illeggibile.
+    // "Anteprima" resta sul percorso useShareSession/modal per chi vuole
+    // scegliere un preset diverso o rivedere prima di condividere.
+    const { socialCardRef, onSocialCardLayout, handleSocialExport, exportingSocial } =
+      useSocialCardExport(session, backgroundUri);
 
     return (
       <>
         {/* Card nascosta fuori schermo catturata da view-shot */}
         <View style={{ position: "absolute", left: -9999, top: 0, opacity: 0 }}>
           <SessionShareCard ref={shareRef} session={session} backgroundUri={backgroundUri} />
+        </View>
+
+        {/* Istanza nascosta separata per l'export a canvas fisso — onLayout
+            misura l'altezza reale della card per catturarla senza deformarla,
+            vedi useSocialCardExport. */}
+        <View
+          style={{ position: "absolute", left: -9999, top: 0, opacity: 0 }}
+          pointerEvents="none"
+          onLayout={onSocialCardLayout}
+        >
+          <SessionShareCard ref={socialCardRef} session={session} transparent />
         </View>
 
         <View style={shareStyles.row}>
@@ -611,10 +632,10 @@ export default function HistoryScreen({ navigation }) {
 
           <Pressable
             style={shareStyles.btn}
-            onPress={handleShare}
-            disabled={sharing}
+            onPress={() => handleSocialExport("story")}
+            disabled={exportingSocial}
           >
-            <Text style={shareStyles.btnText}>{sharing ? (t("historyScreen.sharing") || "Generando...") : (t("historyScreen.share") || "Condividi 📤")}</Text>
+            <Text style={shareStyles.btnText}>{exportingSocial ? (t("historyScreen.sharing") || "Generando...") : (t("historyScreen.share") || "Condividi 📤")}</Text>
           </Pressable>
 
           <Pressable
@@ -904,19 +925,20 @@ export default function HistoryScreen({ navigation }) {
                 })}
               </Text>
             )}
-
-            {/* Bottone condividi (Pro) */}
-            {isPro ? (
-              <ShareButton session={item} />
-            ) : (
-              <Pressable
-                style={shareStyles.btn}
-                onPress={() => navigation?.navigate?.("Paywall")}
-              >
-                <Text style={shareStyles.btnText}>🔒 {t("historyScreen.shareLockedCta") || "Condividi la fight card — Pro"}</Text>
-              </Pressable>
-            )}
           </>
+        )}
+
+        {/* Bottone condividi (Pro) — fuori dal ramo running/boxing: */}
+        {/* SessionShareCard supporta già entrambi i tipi di sessione. */}
+        {isPro ? (
+          <ShareButton session={item} />
+        ) : (
+          <Pressable
+            style={shareStyles.btn}
+            onPress={() => navigation?.navigate?.("Paywall")}
+          >
+            <Text style={shareStyles.btnText}>🔒 {t("historyScreen.shareLockedCta") || "Condividi la fight card — Pro"}</Text>
+          </Pressable>
         )}
       </Pressable>
     );
