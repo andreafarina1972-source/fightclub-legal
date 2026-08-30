@@ -36,12 +36,6 @@ export const SOCIAL_PRESETS = {
   square: { width: 1080, height: 1080 }, // WhatsApp, foto profilo
 };
 
-// Safe zone universale del preset "story": le fasce fuori da qui sono
-// coperte dall'interfaccia di Instagram Stories/Reels e TikTok.
-const STORY_SAFE_ZONE = { x: 90, y: 260, width: 900, height: 1400 };
-const STORY_CARD_WIDTH = 880;
-const STORY_CARD_CENTER_Y = 960;
-
 // feed/square non hanno una safe zone nota fissa: margine interno uniforme.
 const FEED_SQUARE_MARGIN_RATIO = 0.07;
 
@@ -60,11 +54,14 @@ const FALLBACK_BG_COLOR = "#050508";
 // altezza massima) in cui deve stare.
 function getCardBox(preset, canvasW, canvasH) {
   if (preset === "story") {
+    // Nessun margine di sicurezza: la card deve avere le dimensioni dello
+    // schermo (occupare l'intero canvas 1080×1920), non un riquadro centrato
+    // più piccolo con lo sfondo visibile intorno.
     return {
-      width: STORY_CARD_WIDTH,
-      maxHeight: STORY_SAFE_ZONE.height,
+      width: canvasW,
+      maxHeight: canvasH,
       centerX: canvasW / 2,
-      centerY: STORY_CARD_CENTER_Y,
+      centerY: canvasH / 2,
     };
   }
   // feed / square: margine interno del 7% su ogni lato
